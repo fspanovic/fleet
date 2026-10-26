@@ -6,6 +6,9 @@ import { storage } from '@/lib/storage'
 
 export const SCRATCH_KEY = 'fleet.scratchpad'
 export const SCRATCH_RECT_KEY = 'fleet.scratchpad.rect'
+export const SCRATCH_SYNC_KEY = 'fleet.scratchpad.sync'
+export const POLL_OPEN_MS = 2500
+export const POLL_CLOSED_MS = 30000
 /** Typing pauses this long before the buffer is written (blur / close / pagehide write at once). */
 export const SAVE_DELAY_MS = 300
 
@@ -48,6 +51,43 @@ export const loadText = (): string => storage.get(SCRATCH_KEY) ?? ''
 export function saveText(text: string): void {
   if (text) storage.set(SCRATCH_KEY, text)
   else storage.remove(SCRATCH_KEY)
+}
+
+export interface SyncBase {
+  updatedAt: number | null
+  text: string
+}
+
+export function parseBase(raw: unknown): SyncBase | null {
+  const b = raw as Partial<SyncBase> | null
+  if (!b || typeof b !== 'object' || typeof b.text !== 'string') return null
+  if (b.updatedAt !== null && !(typeof b.updatedAt === 'number' && Number.isFinite(b.updatedAt))) return null
+  return { updatedAt: b.updatedAt, text: b.text }
+}
+export const loadBase = (): SyncBase | null => parseBase(storage.getJSON(SCRATCH_SYNC_KEY))
+export const saveBase = (b: SyncBase): void => storage.setJSON(SCRATCH_SYNC_KEY, b)
+
+export function insertedSince(base: string, local: string): string {
+  let p = 0
+  const max = Math.min(base.length, local.length)
+  while (p < max && base[p] === local[p]) p++
+  let s = 0
+  while (s < max - p && base[base.length - 1 - s] === local[local.length - 1 - s]) s++
+  return local.slice(p, local.length - s)
+}
+
+export function appendParagraph(current: string, note: string): string {
+  if (!current) return note
+  const sep = current.endsWith('\n\n') ? '' : current.endsWith('\n') ? '\n' : '\n\n'
+  return current + sep + note
+}
+
+export function mergeScratch(server: string, local: string, base: string): string {
+  if (server === local || server.includes(local)) return server
+  if (local.includes(server)) return local
+  const inserted = insertedSince(base, local).replace(/^\n+/, '')
+  if (!inserted.trim() || server.includes(inserted)) return server
+  return appendParagraph(server, inserted)
 }
 
 export const loadRect = (): Rect | null => parseRect(storage.getJSON(SCRATCH_RECT_KEY))

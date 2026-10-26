@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type PointerEvent as ReactPointerEvent } from 'react'
+import { Suspense, useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type PointerEvent as ReactPointerEvent, type ReactNode } from 'react'
 import {
   CalendarClockIcon,
   CodeXmlIcon,
@@ -25,6 +25,8 @@ import {
   SquareTerminalIcon,
   SunIcon,
   GitPullRequestIcon,
+  ListTodoIcon,
+  SunriseIcon,
 } from 'lucide-react'
 import { toast } from 'sonner'
 import { Redirect, useLocation, useRoute } from 'wouter'
@@ -32,14 +34,16 @@ import { Redirect, useLocation, useRoute } from 'wouter'
 import { api, sessionErrorMessage } from '@/api/client'
 import type { Session } from '@/api/types'
 import { Board } from '@/components/board/Board'
-import { CommandPalette, type PaletteAction } from '@/components/desktop/CommandPalette'
-import { ShortcutsDialog } from '@/components/desktop/ShortcutsDialog'
+import type { PaletteAction } from '@/components/desktop/CommandPalette'
 import { Sidebar, SidebarRail } from '@/components/desktop/Sidebar'
+import { Pitch, useMadrid } from '@/components/Madrid'
+import { Ancelotti, Scoreboard, useQuietFleet } from '@/components/MadridMatch'
 import { NewSessionDialog } from '@/components/NewSessionDrawer'
+import { ScreenFallback } from '@/components/ScreenFallback'
 import { StatusDot } from '@/components/StatusDot'
 import { Kbd } from '@/components/ui/kbd'
 import { useFleet } from '@/hooks/useFleet'
-import { useBoardColumns, useGroups, useViewMode } from '@/hooks/useGroups'
+import { useBoardColumns, useCollapsedGroups, useGroups, useViewMode } from '@/hooks/useGroups'
 import { useNotesHosts, useNotesTree } from '@/hooks/useNotes'
 import { WIDE_QUERY } from '@/hooks/useMediaQuery'
 import { useNow } from '@/hooks/useNow'
@@ -49,7 +53,7 @@ import { useTheme } from '@/hooks/useTheme'
 import { openTitleEditor, startEditing, useSessionTitle } from '@/hooks/useTitles'
 import { editorLabel } from '@/lib/brief'
 import { canAttachInApp, copyWithToast, sessionAttachCommand, sessionAttachLink } from '@/lib/clipboard'
-import { boardOrder } from '@/lib/groups'
+import { boardOrder, listSections, listSectionsOrder } from '@/lib/groups'
 import { notesHref, parseNotesLocation } from '@/lib/notes'
 import { scratchpad } from '@/lib/scratchpad'
 import { PALETTES } from '@/lib/palettes'
@@ -78,15 +82,20 @@ import {
   type ShortcutAction,
 } from '@/lib/shortcuts'
 import { sessionTitle } from '@/lib/title'
+import { lazyWithPreload } from '@/lib/lazy'
 import { cn } from '@/lib/utils'
-import { NotesScreen } from '@/screens/NotesScreen'
-import { PrsScreen } from '@/screens/PrsScreen'
 import { isPrsLocation } from '@/lib/prs'
+import { isTasksLocation } from '@/lib/tasks'
+import { isTodayLocation } from '@/lib/today'
+import { ClosedSessionScreen, JobsScreen, NotesScreen, OperatorScreen, PeltScreen, PrsScreen, SettingsScreen, SquadScreen, TasksScreen, TodayScreen, UsageScreen } from '@/screens/lazy'
 import { SessionScreen, type PaneApi } from '@/screens/SessionScreen'
-import { SettingsScreen } from '@/screens/SettingsScreen'
-import { UsageScreen } from '@/screens/UsageScreen'
-import { JobsScreen } from '@/screens/JobsScreen'
-import { OperatorScreen } from '@/screens/OperatorScreen'
+
+// Dialogs that only open on demand: their own chunks (cmdk with the palette), see lib/lazy.ts.
+const CommandPalette = lazyWithPreload(() => import('@/components/desktop/CommandPalette').then((m) => m.CommandPalette))
+const ShortcutsDialog = lazyWithPreload(() => import('@/components/desktop/ShortcutsDialog').then((m) => m.ShortcutsDialog))
+
+/** A lazily loaded screen in the desktop layout, with its quiet fallback. */
+const lazyPane = (screen: ReactNode) => <Suspense fallback={<ScreenFallback layout="pane" />}>{screen}</Suspense>
 
 const parseBool01 = (raw: string) => (raw === '1' ? true : raw === '0' ? false : undefined)
 
@@ -103,12 +112,22 @@ export function DesktopShell() {
   const { setTheme, setPalette } = useTheme()
   const [location, navigate] = useLocation()
   const [match, params] = useRoute('/s/:host/:id')
+  // `#/closed/:host/:id`: a recently closed / dormant session's chat, read only, in the pane.
+  const [closedOpen, closedParams] = useRoute('/closed/:host/:id')
   const [settingsOpen] = useRoute('/settings')
   const [usageOpen] = useRoute('/usage')
   const [jobsOpen] = useRoute('/jobs')
   const [operatorOpen] = useRoute('/operator')
   // `#/prs`: the pull requests board takes the whole window too.
   const prsOpen = isPrsLocation(location)
+  // `#/tasks`: My tasks, the same way.
+  const tasksOpen = isTasksLocation(location)
+  // `#/today`: what needs you now, the same way.
+  const todayOpen = isTodayLocation(location)
+  // `#/squad`: the sessions as a 4-3-3, the same way.
+  const squadOpen = location === '/squad'
+  // `#/pelt`: pelt Barça, the same way.
+  const peltOpen = location === '/pelt'
   // `#/notes…`: the notes explorer takes the whole window (no sidebar / board).
   const notesLoc = parseNotesLocation(location)
   const notesOpen = notesLoc !== null
@@ -136,10 +155,20 @@ export function DesktopShell() {
   const [mode, setMode] = useViewMode()
   const board = mode === 'board'
   const toggleView = () => setMode(board ? 'list' : 'board')
-  const groups = useGroups(board)
-  const { columns, moveColumn } = useBoardColumns(board, list.view.sessions, groups.groups, fleet, list.host, list.query)
-  // The cursor walks the sessions in on-screen order: the list, or the board column by column.
-  const ordered = useMemo(() => (board ? boardOrder(columns) : list.view.sessions), [board, columns, list.view.sessions])
+  const groups = useGroups(board || sidebarOpen)
+  // List: one section per group (the board's columns) once the server groups; grouping off → the flat list.
+  const sectioned = !board && !!groups.groups?.enabled
+  const { columns, moveColumn, moveCard } = useBoardColumns(board || sectioned, list.view.sessions, groups.groups, fleet, list.host, list.query)
+  const [collapsed, toggleSection] = useCollapsedGroups()
+  // Searching opens every section; any filter hides the sections it leaves empty.
+  const searching = list.query.trim() !== ''
+  const narrowed = searching || list.status !== 'all' || list.host != null
+  const sections = useMemo(() => (sectioned ? listSections(columns, narrowed) : null), [sectioned, columns, narrowed])
+  // The cursor walks the sessions in on-screen order: the list (open sections only), or the board column by column.
+  const ordered = useMemo(
+    () => (board ? boardOrder(columns) : sections ? listSectionsOrder(sections, searching ? [] : collapsed) : list.view.sessions),
+    [board, columns, sections, searching, collapsed, list.view.sessions],
+  )
 
   const [newOpen, setNewOpen] = useState(false)
   const [paletteOpen, setPaletteOpen] = useState(false)
@@ -253,8 +282,10 @@ export function DesktopShell() {
   const run = (action: ShortcutAction, target: HTMLElement | null): boolean => {
     const cur = cursorKey ? byKey.get(cursorKey) : null
     // The session list isn't on screen in the notes explorer: its keys do nothing there.
-    if (notesOpen && !['search', 'new', 'back', 'blur', 'palette', 'help', 'notes', 'scratchpad'].includes(action)) return false
-    if (prsOpen && !['new', 'back', 'blur', 'palette', 'help', 'notes', 'scratchpad'].includes(action)) return false
+    // A full screen in the pane (notes, PRs, tasks, today, squad) keeps its own ↑/↓, Enter and search; the app-wide keys still work.
+    const appKeys = ['new', 'back', 'blur', 'palette', 'help', 'notes', 'scratchpad', 'sidebar', 'view', 'operator', 'prs', 'jobs', 'usage', 'settings']
+    if (notesOpen && !['search', ...appKeys].includes(action)) return false
+    if ((prsOpen || tasksOpen || todayOpen || squadOpen || peltOpen) && !appKeys.includes(action)) return false
     switch (action) {
       case 'next':
         moveCursor(1)
@@ -279,7 +310,7 @@ export function DesktopShell() {
         setNewOpen(true)
         return true
       case 'back':
-        if (selectedKey || settingsOpen || usageOpen || jobsOpen || operatorOpen || notesOpen || prsOpen) {
+        if (selectedKey || closedOpen || settingsOpen || usageOpen || jobsOpen || operatorOpen || notesOpen || prsOpen || tasksOpen || todayOpen || squadOpen || peltOpen) {
           navigate('/')
           return true
         }
@@ -496,6 +527,20 @@ export function DesktopShell() {
           ? [{ id: 'notes', label: 'Notes…', icon: <NotebookTextIcon />, shortcut: shortcutHint('notes'), keywords: ['notes', 'markdown', 'knowledge', 'wiki', 'search'], run: () => navigate(notesHref()) }]
           : []),
         {
+          id: 'tasks',
+          label: 'My tasks…',
+          icon: <ListTodoIcon />,
+          keywords: ['tasks', 'todo', 'productive', 'assigned', 'my work'],
+          run: () => navigate('/tasks'),
+        },
+        {
+          id: 'today',
+          label: 'Today…',
+          icon: <SunriseIcon />,
+          keywords: ['today', 'needs you', 'waiting', 'inbox', 'reviews', 'in progress', 'dashboard'],
+          run: () => navigate('/today'),
+        },
+        {
           id: 'prs',
           label: 'Pull requests…',
           icon: <GitPullRequestIcon />,
@@ -555,8 +600,8 @@ export function DesktopShell() {
     },
   ]
 
-  // Anything but `/`, `/settings`, `/usage`, `/jobs`, `/prs`, notes and `/s/:host/:id` → the list (same as mobile).
-  if (!match && !settingsOpen && !usageOpen && !jobsOpen && !operatorOpen && !notesOpen && !prsOpen && location !== '/') return <Redirect to="/" replace />
+  // Anything but `/`, `/settings`, `/usage`, `/jobs`, `/prs`, `/tasks`, notes, `/s/:host/:id` and `/closed/:host/:id` → the list (same as mobile).
+  if (!match && !closedOpen && !settingsOpen && !usageOpen && !jobsOpen && !operatorOpen && !notesOpen && !prsOpen && !tasksOpen && !todayOpen && !squadOpen && !peltOpen && location !== '/') return <Redirect to="/" replace />
 
   const onSearchNav = (a: 'next' | 'prev' | 'open') => {
     if (a === 'open') {
@@ -578,27 +623,42 @@ export function DesktopShell() {
       onClose={board ? () => navigate('/') : undefined}
       detailsOverlay={board && !detailsFitBeside(flyoutW, parseFloat(getComputedStyle(document.documentElement).fontSize))}
     />
+  ) : closedOpen ? (
+    lazyPane(
+      <ClosedSessionScreen
+        key={`closed/${closedParams.host}/${closedParams.id}`}
+        host={closedParams.host}
+        id={closedParams.id}
+        layout="pane"
+        onClose={board ? () => navigate('/') : undefined}
+      />,
+    )
   ) : settingsOpen ? (
-    <SettingsScreen layout="pane" />
+    lazyPane(<SettingsScreen layout="pane" />)
   ) : usageOpen ? (
-    <UsageScreen layout="pane" />
+    lazyPane(<UsageScreen layout="pane" />)
   ) : jobsOpen ? (
-    <JobsScreen layout="pane" />
+    lazyPane(<JobsScreen layout="pane" />)
   ) : operatorOpen ? (
-    <OperatorScreen layout="pane" />
+    lazyPane(<OperatorScreen layout="pane" />)
+  ) : notesOpen ? (
+    lazyPane(<NotesScreen layout="pane" searchRef={notesSearchRef} />)
+  ) : prsOpen ? (
+    lazyPane(<PrsScreen layout="pane" />)
+  ) : tasksOpen ? (
+    lazyPane(<TasksScreen layout="pane" />)
+  ) : todayOpen ? (
+    lazyPane(<TodayScreen layout="pane" />)
+  ) : squadOpen ? (
+    lazyPane(<SquadScreen layout="pane" />)
+  ) : peltOpen ? (
+    lazyPane(<PeltScreen layout="pane" />)
   ) : null
 
   return (
-    <div className="flex h-dvh overflow-hidden bg-background text-foreground">
-      {notesOpen ? (
-        <main className="flex min-w-0 flex-1">
-          <NotesScreen layout="pane" searchRef={notesSearchRef} />
-        </main>
-      ) : prsOpen ? (
-        <main className="flex min-w-0 flex-1">
-          <PrsScreen layout="pane" />
-        </main>
-      ) : board ? (
+    // The list layout sits on a tinted frame: the sidebar straight on it, the open pane (a session or any other screen) a rounded sheet floating on it.
+    <div className={cn('flex h-dvh overflow-hidden text-foreground', board ? 'bg-frame dark:bg-background' : 'bg-frame')}>
+      {board ? (
         <div ref={boardAreaRef} className="relative flex min-w-0 flex-1">
           <section aria-label="Session board" className="flex min-w-0 flex-1">
             <Board
@@ -606,6 +666,7 @@ export function DesktopShell() {
               groups={groups}
               columns={columns}
               onMoveColumn={moveColumn}
+              onMoveCard={moveCard}
               now={now}
               cursorKey={cursorKey}
               selectedKey={selectedKey}
@@ -622,8 +683,8 @@ export function DesktopShell() {
             // Non-modal: no backdrop, the board stays scrollable and clickable (a card switches the session).
             <main
               className={cn(
-                'absolute inset-y-0 right-0 z-20 flex border-l bg-background shadow-2xl',
-                'animate-in duration-200 ease-out fade-in-0 slide-in-from-right-8 motion-reduce:animate-none',
+                'absolute inset-y-0 right-0 z-20 flex bg-background shadow-[0_0_0_1px_var(--edge-strong),-24px_0_48px_-16px_var(--shadow-tint-3)]',
+                'animate-in duration-(--dur-slow) ease-out fade-in-0 slide-in-from-right-8 motion-reduce:animate-none',
               )}
               style={{ width: flyoutW, ...titlebarOffset(boardW - flyoutW) }}
             >
@@ -667,7 +728,7 @@ export function DesktopShell() {
           ) : null}
         </div>
       ) : sidebarOpen ? (
-        <aside aria-label="Session list" className="relative shrink-0 border-r bg-background" style={{ width: sidebarW }}>
+        <aside aria-label="Session list" className="relative shrink-0" style={{ width: sidebarW }}>
           <Sidebar
             list={list}
             now={now}
@@ -679,6 +740,11 @@ export function DesktopShell() {
             onCollapse={toggleSidebar}
             viewMode={mode}
             onViewMode={setMode}
+            sections={
+              sections
+                ? { columns: sections, collapsed, locked: searching, onToggle: toggleSection, onMove: moveCard, editable: groups.editable, onEdit: groups.edit }
+                : null
+            }
           />
           <div
             role="separator"
@@ -716,8 +782,8 @@ export function DesktopShell() {
         />
       )}
 
-      {board || notesOpen || prsOpen ? null : (
-        <main className="flex min-w-0 flex-1" style={titlebarOffset(sidebarOpen ? sidebarW : '3rem')}>
+      {board ? null : (
+        <main className="my-2 mr-2 flex min-w-0 flex-1 overflow-hidden rounded-[1.25rem] bg-background shadow-pane" style={titlebarOffset(sidebarOpen ? sidebarW : '3rem')}>
           {pane ?? (
             <EmptyPane
               waitingSessions={paletteSessions.filter((s) => s.status === 'waiting').slice(0, 6)}
@@ -728,15 +794,17 @@ export function DesktopShell() {
       )}
 
       <NewSessionDialog open={newOpen} onOpenChange={setNewOpen} onOpenSession={(href) => navigate(href)} />
-      <CommandPalette
-        open={paletteOpen}
-        onOpenChange={setPaletteOpen}
-        sessions={paletteSessions}
-        selectedKey={selectedKey}
-        onOpenSession={(s) => openSession(s, false)}
-        actions={actions}
-      />
-      <ShortcutsDialog open={helpOpen} onOpenChange={setHelpOpen} />
+      <Suspense fallback={null}>
+        <CommandPalette
+          open={paletteOpen}
+          onOpenChange={setPaletteOpen}
+          sessions={paletteSessions}
+          selectedKey={selectedKey}
+          onOpenSession={(s) => openSession(s, false)}
+          actions={actions}
+        />
+        <ShortcutsDialog open={helpOpen} onOpenChange={setHelpOpen} />
+      </Suspense>
     </div>
   )
 }
@@ -756,13 +824,26 @@ function EmptyPane({ waitingSessions, onOpen }: { waitingSessions: Session[]; on
     [[shortcutHint('palette')], 'jump'],
     [[shortcutHint('help')], 'all shortcuts'],
   ]
+  const madrid = useMadrid()
+  const quiet = useQuietFleet()
   return (
-    <div data-tauri-drag-region className="flex flex-1 flex-col items-center justify-center gap-6 p-8 text-center">
-      <div>
-        <p className="text-base font-semibold">No session open</p>
-        <p className="mt-1 text-sm text-dimmer">Pick one from the list, or use the keyboard.</p>
-      </div>
-      <ul className="flex flex-wrap justify-center gap-x-4 gap-y-2 text-xs text-muted-foreground" aria-label="Keyboard hints">
+    <div data-tauri-drag-region className="relative isolate flex flex-1 flex-col items-center justify-center gap-6 overflow-hidden p-8 text-center">
+      {madrid ? <Pitch className="absolute inset-8 -z-10 size-[calc(100%-4rem)]" /> : null}
+      {madrid && quiet ? <Ancelotti className="absolute bottom-0 left-6" /> : null}
+      {madrid ? (
+        <div>
+          <div aria-hidden className="madrid-crest-hero mx-auto mb-4" />
+          <p className="madrid-hala text-3xl font-extrabold tracking-(--tracking-display)">¡Hala Madrid!</p>
+          <p className="mt-1.5 text-sm text-dimmer">No one on the pitch. Pick a player from the squad, or use the keyboard.</p>
+          <Scoreboard className="mt-4" />
+        </div>
+      ) : (
+        <div>
+          <p className="text-2xl font-semibold tracking-(--tracking-display)">No session open</p>
+          <p className="mt-1.5 text-sm text-dimmer">Pick one from the list, or use the keyboard.</p>
+        </div>
+      )}
+      <ul className="flex max-w-2xl flex-wrap justify-center gap-x-5 gap-y-2.5 text-xs text-muted-foreground" aria-label="Keyboard hints">
         {hints.map(([ks, label]) => (
           <li key={label} className="flex items-center gap-1">
             {ks.map((k) => (
@@ -774,14 +855,14 @@ function EmptyPane({ waitingSessions, onOpen }: { waitingSessions: Session[]; on
       </ul>
       {waitingSessions.length ? (
         <section aria-label="Needs you" className="w-full max-w-md text-left">
-          <h2 className="pb-1.5 text-[0.6875rem] font-semibold tracking-wider text-status-waiting uppercase">Needs you</h2>
-          <div className="flex flex-col gap-1.5">
+          <h2 className="px-1 pb-2 text-2xs font-semibold tracking-[0.08em] text-status-waiting uppercase">Needs you</h2>
+          <div className="flex flex-col gap-2">
             {waitingSessions.map((s) => (
               <button
                 key={sessionKey(s)}
                 type="button"
                 onClick={() => onOpen(s)}
-                className="flex items-center gap-2 rounded-lg border border-status-waiting/35 bg-card px-3 py-2 text-left text-sm outline-none hover:bg-muted/60 focus-visible:ring-3 focus-visible:ring-ring/50"
+                className="flex animate-enter items-center gap-2.5 rounded-[0.875rem] bg-card px-3.5 py-3 text-left text-sm shadow-float transition-[border-color,box-shadow] outline-none hover:shadow-float-hover focus-visible:ring-3 focus-visible:ring-ring/50"
               >
                 <StatusDot status={s.status} className="size-2" />
                 <span className="min-w-0 flex-1 truncate font-medium">{sessionTitle(s)}</span>

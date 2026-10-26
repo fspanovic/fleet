@@ -1,22 +1,26 @@
 // Session list logic: status metadata, filtering, search, sorting — pure, unit-tested.
 import type { FleetResponse, Session, SessionStatus } from '@/api/types'
 
-export type StatusKey = SessionStatus
+/** What a status means for every behaviour (filters, counts, sort, colours): `shell` is `idle`. */
+export type StatusKey = Exclude<SessionStatus, 'shell'>
 export interface StatusMeta {
   key: StatusKey
   /** Human label. */
   label: string
+  /** `shell`: idle, with a background task (a Monitor, a background Bash) still running. */
+  background?: boolean
 }
 
-const STATUS_META: Record<StatusKey, StatusMeta> = {
+const STATUS_META: Record<SessionStatus, StatusMeta> = {
   waiting: { key: 'waiting', label: 'needs you' },
   busy: { key: 'busy', label: 'working' },
   idle: { key: 'idle', label: 'idle' },
+  shell: { key: 'idle', label: 'idle · background task', background: true },
   unknown: { key: 'unknown', label: 'unknown' },
 }
 
 export function statusMeta(status: string | null | undefined): StatusMeta {
-  const k = String(status || '').toLowerCase() as StatusKey
+  const k = String(status || '').toLowerCase() as SessionStatus
   return STATUS_META[k] ?? STATUS_META.unknown
 }
 
@@ -119,14 +123,18 @@ export function statusSummary(fleet: FleetResponse | null | undefined): Record<'
   return out
 }
 
+/** The stack a row clusters with (null: none), keyed by the stack's home host: members on other hosts cluster with it. */
+export function stackClusterKey(s: Session): string | null {
+  return s.stack?.id ? `${s.stack.host || s.host}/${s.stack.id}` : null
+}
+
 /**
  * Keep the sessions of one stack adjacent: every stack moves up to the position of its first
  * member (members keep their relative order), everything else stays where it was. Stable, pure;
  * rows without `stack` (older servers) come back unchanged.
  */
 export function clusterByStack(sessions: Session[]): Session[] {
-  // Keyed by the stack's home host: members on other hosts cluster with it.
-  const key = (s: Session) => (s.stack?.id ? `${s.stack.host || s.host}/${s.stack.id}` : null)
+  const key = stackClusterKey
   const members = new Map<string, Session[]>()
   for (const s of sessions) {
     const k = key(s)

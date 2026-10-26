@@ -18,8 +18,11 @@ import { ContextMeter } from '@/components/ContextMeter'
 import { DropOverlay } from '@/components/DropOverlay'
 import { EditableTitle } from '@/components/EditableTitle'
 import { HostBadge } from '@/components/HostBadge'
+import { ModelChip } from '@/components/ModelChip'
 import { PrChip } from '@/components/PrChip'
+import { TaskChip } from '@/components/TaskChip'
 import { NewSessionDialog, NewSessionDrawer, type SpawnPrefill } from '@/components/NewSessionDrawer'
+import { SessionStyleChip } from '@/components/SessionStyleChip'
 import { StatusDot } from '@/components/StatusDot'
 import { StackBar } from '@/components/stack/StackBar'
 import { ChatView } from '@/components/session/ChatView'
@@ -29,16 +32,20 @@ import { OutboxBubbles } from '@/components/session/OutboxBubbles'
 import type { QuestionActions } from '@/components/session/QuestionCard'
 import { DetailsDrawer, DetailsPanel, type DetailsPanelProps } from '@/components/session/DetailsPanel'
 import { TermView } from '@/components/session/TermView'
+import { TerminalDialog } from '@/components/session/TerminalDialog'
 import { ScratchpadButton } from '@/components/Scratchpad'
+import { TldrButton } from '@/components/TldrButton'
 import { Button } from '@/components/ui/button'
 import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group'
 import { useFileDrop } from '@/hooks/useAttach'
 import { useBrief } from '@/hooks/useBrief'
+import { useDetailsRequest } from '@/hooks/useDetailsRequest'
 import { useFileStats } from '@/hooks/useFileLinks'
 import { useFleet } from '@/hooks/useFleet'
 import { useNow } from '@/hooks/useNow'
 import { useOutbox } from '@/hooks/useOutbox'
 import { usePersistentState } from '@/hooks/usePersistentState'
+import { usePermissionToggle } from '@/hooks/usePermissionToggle'
 import { usePoller } from '@/hooks/usePoller'
 import { usePrefs } from '@/hooks/usePrefs'
 import { useSettings } from '@/hooks/useSettings'
@@ -47,13 +54,15 @@ import { useSwipeBack } from '@/hooks/useSwipeBack'
 import { useSessionTitle } from '@/hooks/useTitles'
 import { CHAT_LIMITS, CHAT_POLL_MS, PEEK_POLL_MS, TERM_LINES, nextChatLimit, parseMode, parseSize, type DetailMode } from '@/lib/chat'
 import { continueDraft } from '@/lib/brief'
-import { modelLabel, relTime, shortCwd } from '@/lib/format'
+import { relTime, shortCwd } from '@/lib/format'
 import { harnessLabel } from '@/lib/harness'
 import { tailAnchor } from '@/lib/outbox'
 import { findSession, statusMeta, withoutSession } from '@/lib/sessions'
 import { stacksKnown } from '@/lib/stacks'
 import { isUndoBackspace, withHint } from '@/lib/shortcuts'
-import { STATUS_TEXT } from '@/lib/styles'
+import { sessionCardTone } from '@/lib/cardTone'
+import { HEAD_CHIP, HEAD_META_TEXT, HEAD_SURFACE, STATUS_TEXT } from '@/lib/styles'
+import { isDialogHeld, isDialogOpen, needsTerminal } from '@/lib/terminalKeys'
 import { cn } from '@/lib/utils'
 
 interface ChatState {
@@ -138,6 +147,11 @@ export function SessionScreen({
   // Brief: the top of the Details panel — the desktop column (open state owned by the shell)
   // or the mobile drawer (⋯). Polled only while it shows.
   const brief = useBrief(host, id, pane ? inspector : menuOpen)
+  // "Open details" from a TL;DR popover (row, card or this header): the column, or the mobile drawer.
+  useDetailsRequest(host, id, () => {
+    if (!pane) setMenuOpen(true)
+    else if (!inspector) onToggleInspector?.()
+  })
   // "Continue in new session" → the New session form, prefilled (host, this cwd, the brief's prompt).
   const [continueWith, setContinueWith] = useState<SpawnPrefill | null>(null)
 
@@ -174,6 +188,8 @@ export function SessionScreen({
   const [peekBackend, setPeekBackend] = useState<string | null>(null)
 
   const [gone, setGone] = useState(false)
+  const [held, setHeld] = useState<string | null>(null)
+  const holdMessage = (text: string) => setHeld((cur) => (cur ? `${cur}\n\n${text}` : text))
 
   const pollChat = useCallback(
     async (signal: AbortSignal) => {
@@ -280,6 +296,15 @@ export function SessionScreen({
     : backend === 'unknown'
       ? "Backend is unknown — this session can't be steered."
       : null
+  // Claude's permission mode: the shield beside the composer's paperclip (Chat view only, pane read every 5 s).
+  const permission = usePermissionToggle({ session, host, id, enabled: mode === 'chat' && !lockedReason, desktop: pane })
+  // Waiting on something the transcript can't show (one of Claude's dialogs, a permission
+  // prompt): the screen shows the live terminal and its keys. A message typed while one of
+  // Claude's own dialogs is open would go into it — it is held (`held`) instead.
+  // A primitive copy: handing `session` fields to a helper as-is makes the React Compiler give up on this screen.
+  const waitingFor = session?.waiting_for ? String(session.waiting_for) : null
+  const dialogOpen = !gone && isDialogOpen(status, waitingFor)
+  const showTerminal = !gone && !lockedReason && (needsTerminal(status, chat?.messages) || (pane && mode === 'term'))
 
   // Files dropped anywhere on the session go through the composer (upload → path at the caret).
   const attachRef = useRef<(files: File[]) => void>(null)
@@ -299,7 +324,7 @@ export function SessionScreen({
   const steerError = (err: unknown) => {
     if (isAbortError(err)) return
     if (err instanceof ApiError && err.status === 404) setGone(true)
-    toast.error(sessionErrorMessage(err))
+    toast.error(sendErrorMessage(err))
   }
 
   // Messages go through the outbox (lib/outbox.ts): an undo window (Settings → Send delay), then
@@ -320,6 +345,12 @@ export function SessionScreen({
     onError: (err, _item, mounted) => {
       if (isAbortError(err)) return
       if (mounted && err instanceof ApiError && err.status === 404) setGone(true)
+      // The server held it: a dialog opened before it went out. Keep it with the held message.
+      if (mounted && isDialogHeld(err)) {
+        const text = box.discard(_item.id)
+        if (text != null) holdMessage(text)
+        return
+      }
       // In the chat the bubble says it (Retry / Edit); elsewhere only a toast can.
       if (!mounted || modeRef.current !== 'chat') toast.error(`Not sent: ${sendErrorMessage(err)}`)
     },
@@ -332,9 +363,36 @@ export function SessionScreen({
 
   const send = (text: string): boolean => {
     if (lockedReason || !text.trim()) return false
+    if (dialogOpen) {
+      holdMessage(text)
+      return true
+    }
     box.add(text, sendDelay, tailAnchor(chatRef.current?.messages))
     setJumpSignal((n) => n + 1)
     return true
+  }
+  // Held while a dialog is open: send it anyway (force), send it once the dialog is gone, or
+  // take it back into the composer.
+  const sendHeld = async (force: boolean) => {
+    const text = held
+    if (!text) return
+    setHeld(null)
+    if (!force) {
+      box.add(text, 0, tailAnchor(chatRef.current?.messages))
+      setJumpSignal((n) => n + 1)
+      return
+    }
+    try {
+      await api.send(host, id, text, { force: true })
+      afterSteer()
+    } catch (err) {
+      setHeld(text)
+      steerError(err)
+    }
+  }
+  const editHeld = () => {
+    if (held) composerApi.current?.restore(held)
+    setHeld(null)
   }
   const undo = () => {
     const it = box.cancel()
@@ -373,6 +431,22 @@ export function SessionScreen({
       afterSteer()
     } catch (err) {
       steerError(err)
+    }
+  }
+
+  // Claude Code's queued prompts, handed to Claude now (its send-now); the next poll shows them as
+  // ordinary prompts. A 409 = nothing queued any more (Claude took it) or a dialog is open.
+  const sendNow = async () => {
+    try {
+      const r = await api.sendNow(host, id)
+      toast.success(r.queued > 1 ? `${r.queued} queued messages sent now` : 'Sent now', { duration: 1500 })
+      afterSteer()
+    } catch (err) {
+      if (err instanceof ApiError && err.status === 409) {
+        toast(sendErrorMessage(err))
+        afterSteer()
+      } else steerError(err)
+      throw err
     }
   }
 
@@ -481,45 +555,48 @@ export function SessionScreen({
     />
   )
 
+  // The card's tone (lib/cardTone.ts): the status as the bottom line, the wash — status, or a `web.sessionStyles`
+  // match's (the chip carries the label) — over the page background.
+  const tone = sessionCardTone(session ? { status, style: session.style } : null)
   const column = (
     <>
       <header
         data-tauri-drag-region={pane ? 'deep' : undefined}
-        className="z-20 shrink-0 border-b bg-background/90 pt-safe px-safe backdrop-blur-md backdrop-saturate-150"
+        data-wash={tone.dataWash}
+        style={tone.style}
+        className={cn('z-20 shrink-0 pt-safe px-safe backdrop-blur-xl backdrop-saturate-150', HEAD_SURFACE, tone.head)}
       >
         <div
           className={
             pane
-              ? 'titlebar titlebar-lead flex w-full items-center gap-1 py-1.5 pr-2 pl-4 [--titlebar-pad:1rem]'
+              ? 'titlebar titlebar-lead flex w-full items-center gap-1.5 py-2 pr-3 pl-5 [--titlebar-pad:1.25rem]'
               : 'mx-auto flex w-full max-w-3xl items-center gap-1 py-1.5 pr-2 pl-1'
           }
         >
           {pane ? null : (
-            <Button variant="ghost" size="icon" aria-label="Back" onClick={back} className="size-11 shrink-0 rounded-xl">
+            <Button variant="ghost" size="icon" aria-label="Back" onClick={back} className="size-11 shrink-0 rounded-full">
               <ChevronLeftIcon className="size-6" />
             </Button>
           )}
           <div className="min-w-0 flex-1">
-            <div className="flex min-w-0 text-[0.9375rem] leading-tight font-bold">
-              {session ? <EditableTitle session={session} scope="header" tapToEdit className="text-[0.9375rem] font-bold" /> : <span className="truncate">{name}</span>}
+            <div className={cn('flex min-w-0 leading-tight font-semibold tracking-(--tracking-heading)', pane ? 'text-lg' : 'text-md')}>
+              {session ? <EditableTitle session={session} scope="header" tapToEdit className={cn('font-semibold', pane ? 'text-lg' : 'text-md')} /> : <span className="truncate">{name}</span>}
             </div>
-            <div className="mt-0.5 flex min-w-0 items-center gap-1.5 overflow-hidden text-xs whitespace-nowrap">
+            <div className={cn('mt-1 flex min-w-0 items-center gap-1.5 overflow-hidden text-xs whitespace-nowrap', HEAD_META_TEXT, !pane && 'flex-wrap gap-y-0.5')}>
               <StatusDot status={status} className="size-2" />
-              <span className={cn('shrink-0', STATUS_TEXT[meta.key])}>{gone ? 'gone' : meta.label}</span>
-              <HostBadge host={host} className="h-4 px-1 text-[0.625rem]" />
-              {session?.session_id ? <PrChip session={{ host, session_id: session.session_id }} className="h-4" /> : null}
-              {session?.context?.model ? (
-                <span className="shrink-0 text-dim" title={session.context.model}>
-                  {modelLabel(session.context.model)}
-                </span>
-              ) : null}
-              <ContextMeter context={session?.context} />
+              <span className={cn('shrink-0 font-medium transition-colors duration-(--dur-slow)', STATUS_TEXT[meta.key])}>{gone ? 'gone' : meta.label}</span>
+              <HostBadge host={host} className={HEAD_CHIP} />
+              {session ? <SessionStyleChip session={session} /> : null}
+              {session?.session_id ? <PrChip session={{ host, session_id: session.session_id }} /> : null}
+              {session?.session_id ? <TaskChip session={{ host, session_id: session.session_id }} /> : null}
+              <ModelChip model={session?.context?.model} className={HEAD_CHIP} picker={{ host, id, harness: session?.harness, window: session?.context?.window, lockedReason }} />
+              <ContextMeter context={session?.context} variant="full" />
               {pane && session?.cwd ? (
-                <span className="min-w-0 shrink truncate font-mono text-[0.6875rem] text-dimmer" title={session.cwd}>
+                <span className="min-w-0 shrink-[100] truncate font-mono text-2xs text-dimmer" title={session.cwd}>
                   · {shortCwd(session.cwd, 60)}
                 </span>
               ) : null}
-              <span className="truncate text-dimmer tabular-nums">
+              <span className={cn('truncate text-dimmer tabular-nums', pane ? 'shrink-0' : 'min-w-0 flex-[1_0_0]')}>
                 {updatedAt ? `· ${relTime(updatedAt, now)} ago` : '· connecting…'}
               </span>
             </div>
@@ -530,9 +607,9 @@ export function SessionScreen({
               type="single"
               value={mode}
               onValueChange={(v) => v && setMode(v as DetailMode)}
-              spacing={0}
+              spacing={0.5}
               aria-label="View mode"
-              className="shrink-0 rounded-xl bg-muted p-0.5"
+              className="shrink-0 rounded-full bg-fill p-0.5"
             >
               <ToggleGroupItem value="chat" aria-label="Chat view" title={pane ? withHint('Chat', 'mode') : undefined} className={modeItem}>
                 <MessageSquareTextIcon />
@@ -542,6 +619,7 @@ export function SessionScreen({
               </ToggleGroupItem>
             </ToggleGroup>
           ) : null}
+          <TldrButton session={{ host, session_id: id, updated_at: session?.updated_at }} variant="header" />
           {pane ? (
             <Button
               variant="ghost"
@@ -550,28 +628,28 @@ export function SessionScreen({
               title={withHint('Details', 'inspector')}
               aria-pressed={inspector}
               onClick={onToggleInspector}
-              className={cn('size-11 shrink-0 rounded-xl', inspector && 'bg-muted text-foreground')}
+              className={cn('size-9 shrink-0 rounded-full text-muted-foreground', inspector && 'bg-fill-strong text-foreground')}
             >
-              <PanelRightIcon className="size-5" />
+              <PanelRightIcon className="size-[1.125rem]" />
             </Button>
           ) : (
             <>
-            <ScratchpadButton className="size-11 shrink-0 rounded-xl text-muted-foreground [&_svg:not([class*='size-'])]:size-5" />
+            <ScratchpadButton className="size-11 shrink-0 rounded-full text-muted-foreground [&_svg:not([class*='size-'])]:size-5" />
             <Button
               variant="ghost"
               size="icon"
               aria-label="More"
               aria-expanded={menuOpen}
               onClick={() => setMenuOpen(true)}
-              className="size-11 shrink-0 rounded-xl"
+              className="size-11 shrink-0 rounded-full"
             >
               <EllipsisIcon className="size-5" />
             </Button>
             </>
           )}
           {pane && onClose ? (
-            <Button variant="ghost" size="icon" aria-label="Close session" title="Close (Esc)" onClick={onClose} className="size-11 shrink-0 rounded-xl">
-              <XIcon className="size-5" />
+            <Button variant="ghost" size="icon" aria-label="Close session" title="Close (Esc)" onClick={onClose} className="size-9 shrink-0 rounded-full text-muted-foreground">
+              <XIcon className="size-[1.125rem]" />
             </Button>
           ) : null}
         </div>
@@ -619,6 +697,8 @@ export function SessionScreen({
             outbox={outboxView('chat')}
             outboxKey={outbox.map((it) => `${it.id}:${it.state}`).join(',')}
             questionActions={questionActions}
+            terminalShown={showTerminal}
+            onSendNow={lockedReason ? null : sendNow}
           />
         ) : (
           <TermView text={peek?.text ?? null} failed={!!peekErr} fontSize={termFont} jumpSignal={jumpSignal} />
@@ -627,14 +707,14 @@ export function SessionScreen({
           // A narrow pane: the details lie over the chat (header and composer stay usable).
           <aside
             aria-label="Session details"
-            className="absolute inset-y-0 right-0 z-30 w-80 max-w-[90%] border-l bg-background shadow-xl xl:w-96"
+            className="absolute inset-y-0 right-0 z-30 w-80 max-w-[90%] animate-in border-l border-hairline bg-background shadow-2xl duration-(--dur-slow) ease-out fade-in-0 slide-in-from-right-6 xl:w-96"
           >
             <DetailsPanel {...menuProps} open variant="panel" />
           </aside>
         ) : null}
         {errText ? (
           <div className="pointer-events-none absolute inset-x-0 top-2 z-10 flex justify-center px-3">
-            <div className="flex max-w-full items-center gap-2 rounded-full border border-destructive/40 bg-popover/95 px-3 py-1.5 text-xs text-destructive shadow-md backdrop-blur-sm">
+            <div className="flex max-w-full animate-in items-center gap-2 rounded-full border border-destructive/40 bg-popover/95 px-3 py-1.5 text-xs text-destructive shadow-overlay backdrop-blur-sm duration-(--dur-slow) ease-out fade-in-0 slide-in-from-top-1">
               <CircleAlertIcon className="size-3.5 shrink-0" />
               <span className="truncate">{errText}</span>
             </div>
@@ -642,6 +722,44 @@ export function SessionScreen({
         ) : null}
       </main>
 
+      {showTerminal ? (
+        <TerminalDialog
+          host={host}
+          id={id}
+          screen={mode === 'chat'}
+          waitingFor={waitingFor}
+          waiting={status === 'waiting'}
+          locked={lockedReason != null}
+          desktop={pane}
+          fontSize={termFont}
+          onSteered={() => {
+            refreshFleet()
+            scheduleFollowUps()
+            refreshActiveRef.current()
+          }}
+        />
+      ) : null}
+      {held ? (
+        <div className={cn('shrink-0 px-safe', pane ? 'mx-auto w-full max-w-4xl px-4 pt-2' : 'mx-auto w-full max-w-3xl px-3 pt-2')}>
+          <div role="status" className="flex min-w-0 animate-enter flex-wrap items-center gap-x-2 gap-y-1 rounded-2xl bg-status-waiting/10 px-3.5 py-2.5 text-xs ring-1 ring-status-waiting/25">
+            <CircleAlertIcon className="size-3.5 shrink-0 text-status-waiting" />
+            <span className="min-w-0 flex-1 basis-48">
+              {dialogOpen ? 'Not sent: Claude has a dialog open, and the message would be typed into it. Close it (Esc), or send anyway.' : 'Not sent yet: it was held while a dialog was open.'}
+              <span className="block truncate text-dimmer" title={held}>
+                “{held}”
+              </span>
+            </span>
+            <span className="flex shrink-0 items-center gap-1">
+              <Button size="sm" variant={dialogOpen ? 'outline' : 'default'} className="h-7 rounded-full px-3 text-xs" onClick={() => void sendHeld(dialogOpen)}>
+                {dialogOpen ? 'Send anyway' : 'Send'}
+              </Button>
+              <Button size="sm" variant="ghost" className="h-7 rounded-full px-3 text-xs" onClick={editHeld}>
+                Edit
+              </Button>
+            </span>
+          </div>
+        </div>
+      ) : null}
       {mode === 'term' && outbox.some((it) => it.state !== 'sent') ? (
         <div className={cn('shrink-0 px-safe', pane ? 'mx-auto w-full max-w-4xl px-4 pt-2' : 'mx-auto w-full max-w-3xl px-3 pt-2')}>
           {outboxView('strip')}
@@ -662,6 +780,7 @@ export function SessionScreen({
         voiceHint={[name, session?.cwd?.split('/').pop()].filter(Boolean).join(', ')}
         sessionId={id}
         slashCommands={(session?.harness || 'claude') === 'claude'}
+        permission={permission}
       />
       <DropOverlay show={drop.dragging} hint={`Uploaded to ${host}; the path goes into the message`} />
       <FilePreview host={host} id={id} file={preview} onClose={() => setPreviewOf(null)} desktop={pane} />
@@ -670,12 +789,12 @@ export function SessionScreen({
 
   if (pane) {
     return (
-      <div className="flex h-full min-w-0 flex-1 overflow-hidden bg-background">
+      <div className="flex h-full min-w-0 flex-1 animate-fade overflow-hidden bg-background">
         <section aria-label={`Session ${name}`} className="relative flex min-w-0 flex-1 flex-col" {...drop.bind}>
           {column}
         </section>
         {inspector && !detailsOverlay ? (
-          <aside aria-label="Session details" className="w-80 shrink-0 border-l bg-card/30 xl:w-96">
+          <aside aria-label="Session details" className="w-80 shrink-0 border-l border-hairline bg-frame/60 xl:w-96">
             <DetailsPanel {...menuProps} open variant="panel" />
           </aside>
         ) : null}
@@ -694,4 +813,4 @@ export function SessionScreen({
 }
 
 const modeItem =
-  'size-10 rounded-[10px] text-muted-foreground data-[state=on]:bg-background data-[state=on]:text-foreground data-[state=on]:shadow-sm dark:data-[state=on]:bg-accent [&_svg:not([class*=size-])]:size-[18px]'
+  'size-8 rounded-full text-muted-foreground hover:bg-transparent hover:text-foreground data-[state=on]:bg-seg data-[state=on]:text-foreground data-[state=on]:shadow-[0_1px_2px_0_var(--shadow-tint-2),0_0_0_0.5px_var(--edge-strong)] [&_svg:not([class*=size-])]:size-4'

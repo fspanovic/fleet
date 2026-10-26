@@ -1,12 +1,13 @@
 import { useState } from 'react'
 import { ChevronRightIcon, HistoryIcon, Loader2Icon, PlayIcon } from 'lucide-react'
+import { useRoute } from 'wouter'
 
 import type { ClosedView } from '@/api/types'
-import { ArmButton } from '@/components/DormantSection'
+import { ArmButton, PreviewLink } from '@/components/DormantSection'
 import { HostBadge } from '@/components/HostBadge'
 import { Button } from '@/components/ui/button'
 import { useDormant } from '@/hooks/useDormant'
-import { closedMeta, dormantTitles, searchDormant } from '@/lib/dormant'
+import { closedMeta, dormantTitles, previewSessionId, searchDormant } from '@/lib/dormant'
 import { cn } from '@/lib/utils'
 
 /**
@@ -19,6 +20,8 @@ import { cn } from '@/lib/utils'
 export function ClosedSection({ now, host = null, query = '', desktop = false, className }: { now: number; host?: string | null; query?: string; desktop?: boolean; className?: string }) {
   const { hosts, busy, resumeClosed, forgetClosed } = useDormant()
   const [open, setOpen] = useState(false)
+  // The entry whose read-only chat is open (`#/closed/<host>/<id>`) is highlighted.
+  const [previewing, pp] = useRoute('/closed/:host/:id')
   const shown = (host ? hosts.filter((h) => h.host === host) : hosts).map((h) => searchDormant(h, query)).filter((h) => h.closed.length > 0)
   if (!shown.length) return null
   const total = shown.reduce((n, h) => n + h.closed.length, 0)
@@ -48,6 +51,8 @@ export function ClosedSection({ now, host = null, query = '', desktop = false, c
               {h.closed.map((v) => (
                 <ClosedRow
                   key={`${v.kind}/${v.target}`}
+                  host={h.host}
+                  selected={previewing && pp.host === h.host && (v.sessions ?? []).some((x) => x?.sessionId === pp.id)}
                   view={v}
                   now={now}
                   size={size}
@@ -64,6 +69,8 @@ export function ClosedSection({ now, host = null, query = '', desktop = false, c
 }
 
 function ClosedRow({
+  host,
+  selected,
   view: v,
   now,
   size,
@@ -71,6 +78,8 @@ function ClosedRow({
   onResume,
   onForget,
 }: {
+  host: string
+  selected: boolean
   view: ClosedView
   now: number
   size: 'sm' | 'lg'
@@ -81,23 +90,30 @@ function ClosedRow({
   const titles = dormantTitles(v)
   const how = v.kind === 'tmux' ? 'Recreate the tmux session and resume its Claude sessions' : v.tmuxSession ? `Resume it in a new window of ${v.tmuxSession}` : 'Resume it in a new tmux session'
   return (
-    <div className="rounded-lg border border-dashed border-border/50 bg-card/30 px-3 py-2">
+    <PreviewLink
+      host={host}
+      id={previewSessionId(v)}
+      selected={selected}
+      className="rounded-2xl bg-fill-hover px-3.5 py-2.5"
+      actions={
+        <>
+          <ArmButton confirm="Forget?" onConfirm={onForget} size={size} className="text-dimmer" title="Drop it from the list">
+            Forget
+          </ArmButton>
+          <Button type="button" variant="outline" size={size} disabled={busy} onClick={onResume} title={how}>
+            {busy ? <Loader2Icon className="animate-spin" /> : <PlayIcon />}
+            Resume
+          </Button>
+        </>
+      }
+    >
       <div className="min-w-0 opacity-70">
         <p className="truncate text-sm font-semibold" title={v.name}>
           {v.name}
         </p>
         {titles && titles !== v.name ? <p className="line-clamp-2 text-xs break-words text-muted-foreground">{titles}</p> : null}
-        <p className="mt-0.5 truncate text-[0.6875rem] text-dimmer tabular-nums">{closedMeta(v, now)}</p>
+        <p className="mt-0.5 truncate text-2xs text-dimmer tabular-nums">{closedMeta(v, now)}</p>
       </div>
-      <div className="mt-1.5 flex items-center justify-end gap-1">
-        <ArmButton confirm="Forget?" onConfirm={onForget} size={size} className="text-dimmer" title="Drop it from the list">
-          Forget
-        </ArmButton>
-        <Button type="button" variant="outline" size={size} disabled={busy} onClick={onResume} title={how}>
-          {busy ? <Loader2Icon className="animate-spin" /> : <PlayIcon />}
-          Resume
-        </Button>
-      </div>
-    </div>
+    </PreviewLink>
   )
 }

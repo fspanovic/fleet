@@ -29,8 +29,10 @@ import {
   parseModelOutput,
   removedResourceKeys,
   serializeBrief,
+  summaryLine,
 } from './brief-format.mjs';
 import { readDelta } from './brief-extract.mjs';
+import { isIdleStatus } from './util.mjs';
 
 export const SESSION_ID_RE = /^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/;
 const HOUR_MS = 60 * 60 * 1000;
@@ -53,6 +55,15 @@ export function createBriefStore({ dir }) {
     async read(id) {
       try {
         return await fsp.readFile(file(id), 'utf8');
+      } catch (err) {
+        if (err?.code === 'ENOENT') return null;
+        throw err;
+      }
+    },
+    /** The file's mtime (ms), null when there is none. */
+    async mtime(id) {
+      try {
+        return (await fsp.stat(file(id))).mtimeMs;
       } catch (err) {
         if (err?.code === 'ENOENT') return null;
         throw err;
@@ -211,6 +222,9 @@ export function createBriefs({
   let capLoggedAt = 0;
   let timer = null;
   let stopped = true;
+  const lines = new Map(); // sessionId → { line: summaryLine(Summary), mtimeMs } (rows' `briefSummary`)
+  let linesRun = null;
+  let linesAgain = null;
 
   const iso = (t = now()) => new Date(t).toISOString();
   const memFor = (id) => {
@@ -233,6 +247,53 @@ export function createBriefs({
   async function save(id, brief) {
     brief.meta = { ...brief.meta, session: id, updated: iso() };
     await store.write(id, serializeBrief(brief));
+    // The row's summary line follows at once; mtimeMs null = re-read on the next pass.
+    lines.set(id, { line: summaryLine(brief.summary, { home, hosts: [self] }), mtimeMs: null });
+  }
+
+  /**
+   * Summary lines of these sessions' brief files: read only (never extraction, never the model), a
+   * file re-read only when its mtime moved (every time with a store that has no `mtime`); sessions
+   * not in `ids` are forgotten.
+   */
+  async function refreshLinesOnce(ids) {
+    const live = new Set(ids);
+    for (const id of ids) {
+      try {
+        const mtimeMs = store.mtime ? await store.mtime(id) : undefined;
+        if (mtimeMs === null) {
+          lines.delete(id);
+          continue;
+        }
+        const prev = lines.get(id);
+        if (prev && mtimeMs !== undefined && prev.mtimeMs === mtimeMs) continue;
+        const text = await store.read(id);
+        if (text == null) lines.delete(id);
+        else lines.set(id, { line: summaryLine(parseBrief(text).summary, { home, hosts: [self] }), mtimeMs });
+      } catch (err) {
+        log(`[briefs] summary ${id.slice(0, 8)}: ${err?.message ?? err}`);
+      }
+    }
+    for (const id of lines.keys()) if (!live.has(id)) lines.delete(id);
+  }
+
+  /** One pass at a time; a call while one runs runs once more after it, with the latest ids. */
+  function refreshLines(ids) {
+    if (linesRun) {
+      linesAgain = ids;
+      return linesRun;
+    }
+    linesRun = (async () => {
+      let next = ids;
+      while (next) {
+        linesAgain = null;
+        await refreshLinesOnce(next);
+        next = linesAgain;
+      }
+    })().finally(() => {
+      linesRun = null;
+    });
+    return linesRun;
   }
 
   async function gitFor(cwd) {
@@ -394,7 +455,7 @@ export function createBriefs({
 
   function isIdle(session, t) {
     const m = memFor(session.session_id);
-    if (session.status !== 'idle' && session.status !== 'waiting') {
+    if (!isIdleStatus(session.status) && session.status !== 'waiting') {
       m.idleSeenAt = null;
       return false;
     }
@@ -537,6 +598,25 @@ export function createBriefs({
     },
     tick,
     autoUpdate,
+
+    /**
+     * Host → the same host with `briefSummary` (summaryLine of its brief's Summary) on every session
+     * whose brief file has one, as read so far (sync; never waits), and a background re-read of this
+     * host's brief files started. Reads only — no file is made for a session without one.
+     */
+    stamp(host) {
+      if (!host?.ok || !Array.isArray(host.sessions)) return host;
+      const ids = host.sessions.map((s) => s?.session_id).filter((id) => typeof id === 'string' && SESSION_ID_RE.test(id));
+      refreshLines(ids).catch((err) => log(`[briefs] summaries: ${err?.message ?? err}`));
+      const sessions = host.sessions.map((s) => {
+        const line = s?.session_id ? lines.get(s.session_id)?.line : '';
+        return line ? { ...s, briefSummary: line } : s;
+      });
+      return { ...host, sessions };
+    },
+    /** The summary line read so far for a session ('' when none); refreshLines(ids) → Promise (tests). */
+    summaryLine: (id) => lines.get(id)?.line ?? '',
+    refreshLines,
 
     /** GET: the stored brief (with fresh no-model extraction when the session is live), or an empty skeleton. */
     async get(id, session = null) {

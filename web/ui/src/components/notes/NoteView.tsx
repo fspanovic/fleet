@@ -91,7 +91,7 @@ export function NoteView({ host, path, entry, index, highlight, scrollToHit, des
       <div className={cn('mx-auto w-full px-4 pt-2 pb-10', desktop ? 'max-w-3xl' : 'max-w-2xl')} style={{ fontSize: '0.9375rem', lineHeight: 1.6 }}>
         {file.meta.length ? <Frontmatter meta={file.meta} /> : null}
         {file.encrypted ? (
-          <p className="mb-3 flex items-center gap-2 rounded-lg border border-dashed px-3 py-2 text-xs text-muted-foreground">
+          <p className="mb-3 flex items-center gap-2 rounded-xl border border-dashed border-hairline px-3 py-2 text-xs text-muted-foreground">
             <LockIcon className="size-3.5 shrink-0" /> Encrypted content is not shown here.
           </p>
         ) : null}
@@ -115,7 +115,7 @@ export function NoteView({ host, path, entry, index, highlight, scrollToHit, des
       {header}
       <div ref={bodyRef} className="min-h-0 flex-1 overflow-y-auto overscroll-contain">
         <div className={cn('mx-auto w-full px-4 pt-4 pb-2', desktop ? 'max-w-3xl' : 'max-w-2xl')}>
-          <h1 className="text-xl leading-tight font-bold tracking-tight [overflow-wrap:anywhere]">{title}</h1>
+          <h1 className="text-xl leading-tight font-bold tracking-(--tracking-display) [overflow-wrap:anywhere]">{title}</h1>
           <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-muted-foreground">
             <HostBadge host={host} />
             <span className="min-w-0 font-mono break-all text-dimmer">{path}</span>
@@ -156,7 +156,7 @@ export function NoteView({ host, path, entry, index, highlight, scrollToHit, des
 /** Frontmatter as a compact key → value grid; lists as chips, URLs as links. */
 function Frontmatter({ meta }: { meta: NoteFile['meta'] }) {
   return (
-    <dl className="mb-4 grid grid-cols-[auto_minmax(0,1fr)] gap-x-3 gap-y-1 rounded-lg border bg-muted/30 px-3 py-2 text-xs">
+    <dl className="mb-4 grid grid-cols-[auto_minmax(0,1fr)] gap-x-3 gap-y-1 rounded-xl bg-fill-hover px-3.5 py-2.5 text-xs">
       {meta.map(([k, v]) => (
         <div key={k} className="contents">
           <dt className="font-mono text-dimmer">{k}</dt>

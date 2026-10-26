@@ -4,6 +4,7 @@
 //! does) — just the window-dragging permission its top bar needs (see `shell`).
 
 mod links;
+mod notify;
 mod server;
 mod shell;
 
@@ -17,6 +18,7 @@ use std::time::{Duration, Instant};
 use serde::Serialize;
 use tauri::ipc::CapabilityBuilder;
 use tauri::menu::{Menu, MenuItem, PredefinedMenuItem, Submenu};
+use tauri::utils::config::BackgroundThrottlingPolicy;
 use tauri::webview::{DownloadEvent, NewWindowResponse, PageLoadEvent};
 use tauri::{
     AppHandle, Manager, RunEvent, Url, WebviewUrl, WebviewWindow, WebviewWindowBuilder, WindowEvent,
@@ -302,6 +304,10 @@ fn build_window(app: &AppHandle) -> tauri::Result<WebviewWindow> {
                 attach(&host, &session);
                 false
             }
+            Action::Notify { title, body, path } => {
+                notify::show(&title, &body, &path);
+                false
+            }
             Action::Deny => false,
         })
         .on_new_window(|url, _| {
@@ -310,7 +316,11 @@ fn build_window(app: &AppHandle) -> tauri::Result<WebviewWindow> {
             }
             NewWindowResponse::Deny
         })
+        // Keep polling while hidden (⌘W, minimized, covered): the page's needs-you
+        // notifications must not stop when the window is out of sight.
+        .background_throttling(BackgroundThrottlingPolicy::Disabled)
         .on_document_title_changed(|w, title| {
+            let _ = w.set_badge_count(shell::badge_count(&title));
             let _ = w.set_title(if title.trim().is_empty() {
                 "Fleet"
             } else {
@@ -382,7 +392,7 @@ fn allow_window_drag(app: &AppHandle) -> tauri::Result<()> {
     app.add_capability(cap)
 }
 
-fn show_main(app: &AppHandle) {
+pub(crate) fn show_main(app: &AppHandle) {
     if let Some(w) = app.get_webview_window("main") {
         let _ = w.unminimize();
         let _ = w.show();
@@ -418,6 +428,7 @@ fn main() {
         .on_menu_event(|app, ev| on_menu(app, ev.id().as_ref()))
         .setup(|app| {
             allow_window_drag(app.handle())?;
+            notify::init(app.handle());
             build_window(app.handle())?;
             Ok(())
         })

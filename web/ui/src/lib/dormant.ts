@@ -1,7 +1,7 @@
 // Dormant sessions (a reboot left them; `fleet restore` brings them back) — pure helpers for the
 // Dormant section and the Board's dimmed cards. Unit-tested in dormant.test.ts.
 import { ApiError } from '@/api/client'
-import type { ClosedView, DormantView, GroupMember, RestoreResponse } from '@/api/types'
+import type { ClosedView, DormantSession, DormantView, GroupMember, PastRecord, RestoreResponse } from '@/api/types'
 import { relTime } from '@/lib/format'
 
 /** One host's answer to GET …/dormant (an empty list when it has none, or predates the route). */
@@ -143,4 +143,88 @@ export function restoreSummary(r: RestoreResponse): { ok: boolean; title: string
   ].filter(Boolean)
   const title = restored.length ? `Resumed ${names}` : 'Nothing resumed'
   return { ok: failed.length === 0 && restored.length > 0, title, description: lines.join('\n') }
+}
+
+// --- the read-only preview of a closed / dormant session (`#/closed/<host>/<id>`) ------------
+
+/** Hash route of a closed or dormant session's read-only chat. */
+export function closedHref(host: string, id: string): string {
+  return `/closed/${encodeURIComponent(host)}/${encodeURIComponent(id)}`
+}
+
+/** The session a click on an entry previews: its first Claude session (null: no Claude pane, nothing to show). */
+export function previewSessionId(v: DormantView): string | null {
+  return (v.sessions ?? []).find((s) => typeof s?.sessionId === 'string' && s.sessionId)?.sessionId ?? null
+}
+
+/** Where a session id sits in the lists the sidebar already has: its entry, pool and Claude session. */
+export interface PastEntry {
+  pool: 'closed' | 'dormant'
+  view: DormantView | ClosedView
+  session: DormantSession
+}
+
+export function findPastEntry(hosts: HostDormant[], host: string, id: string): PastEntry | null {
+  const h = hosts.find((x) => x.host === host)
+  if (!h) return null
+  for (const [pool, views] of [['closed', h.closed], ['dormant', h.views]] as const) {
+    for (const view of views) {
+      const session = (view.sessions ?? []).find((s) => s?.sessionId === id)
+      if (session) return { pool, view, session }
+    }
+  }
+  return null
+}
+
+/** The server's record for the preview, else one built from the sidebar's lists (shown before the first fetch lands). */
+export function pastRecord(fromServer: PastRecord | null | undefined, entry: PastEntry | null): PastRecord | null {
+  if (fromServer) return fromServer
+  if (!entry) return null
+  const { pool, view: v, session: s } = entry
+  const closedAt = pool === 'closed' ? ((v as ClosedView).closedAt ?? v.since ?? null) : null
+  return {
+    pool,
+    kind: v.kind ?? null,
+    target: v.target ?? null,
+    name: v.name ?? null,
+    title: s.title ?? null,
+    sessionName: s.name ?? null,
+    cwd: s.cwd ?? null,
+    harness: s.harness || 'claude',
+    since: v.since ?? null,
+    closedAt,
+    tmuxSession: (v as ClosedView).tmuxSession ?? null,
+  }
+}
+
+/** What the preview's header calls it: the session's title, its name, the entry's name, else the short id. */
+export function pastTitle(r: PastRecord | null, id: string): string {
+  return r?.title || r?.sessionName || r?.name || id.slice(0, 8)
+}
+
+/** "closed 2h ago" / "down 3h" — when it stopped. */
+export function pastWhen(r: PastRecord | null, now = Date.now()): string {
+  if (!r) return ''
+  const ago = relTime(sinceMs(r.pool === 'closed' ? (r.closedAt ?? r.since) : r.since), now)
+  if (!ago) return ''
+  return r.pool === 'closed' ? `closed ${ago} ago` : `down ${ago}`
+}
+
+/** The preview's marker: "Closed — read only" / "Dormant — read only". */
+export function pastMarker(r: Pick<PastRecord, 'pool'> | null): string {
+  return `${r?.pool === 'dormant' ? 'Dormant' : 'Closed'} — read only`
+}
+
+/** Why the preview has no chat to show, in words (null: nothing went wrong). */
+export function pastErrorText(err: unknown): string | null {
+  if (!err) return null
+  if (err instanceof ApiError) {
+    if (err.status === 404 && /^not a recently closed or dormant session/i.test(err.message)) return 'No longer in the recently closed or dormant list — resumed or forgotten'
+    if (err.status === 404 && /transcript/i.test(err.message)) return 'No transcript on disk for this session'
+    if (err.status === 404 && /^unknown host/i.test(err.message)) return 'Unknown host'
+    if (err.status === 501 || (err.status === 404 && /^not found$|^HTTP 404$/.test(err.message))) return "This host's fleet can't show closed sessions — update it there"
+    if (err.status === 0) return 'network unreachable'
+    return err.message || `HTTP ${err.status}`
+  }
+  return (err as Error)?.message || 'request failed'
 }

@@ -1,9 +1,11 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react'
 import {
+  BotIcon,
   CodeXmlIcon,
   CopyIcon,
   GitForkIcon,
   LayersIcon,
+  Link2Icon,
   Loader2Icon,
   MessageSquareTextIcon,
   PowerIcon,
@@ -16,9 +18,13 @@ import { toast } from 'sonner'
 import { api, sessionErrorMessage } from '@/api/client'
 import type { AutoNameRun, Session } from '@/api/types'
 import { BriefSection, type BriefSectionProps } from '@/components/session/BriefSection'
+import { TaskChip } from '@/components/TaskChip'
 import { Button } from '@/components/ui/button'
 import { Drawer, DrawerContent, DrawerDescription, DrawerHeader, DrawerTitle } from '@/components/ui/drawer'
 import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group'
+import { useNow } from '@/hooks/useNow'
+import { openTaskPicker } from '@/hooks/useSessionActions'
+import { useSessionTask, useTasks } from '@/hooks/useTasks'
 import { useSessionTitle } from '@/hooks/useTitles'
 import { autoNameSummary, autoNameToast } from '@/lib/autoname'
 import { editorLabel } from '@/lib/brief'
@@ -27,7 +33,8 @@ import type { DetailMode } from '@/lib/chat'
 import { ctxLevel, ctxSummary, relTime, shortCwd } from '@/lib/format'
 import { harnessLabel } from '@/lib/harness'
 import { withHint } from '@/lib/shortcuts'
-import { CTX_TEXT } from '@/lib/styles'
+import { runningSubagents, subagentJob, subagentMeta, subagentsCountLabel } from '@/lib/subagents'
+import { CTX_TEXT, INSET_GROUP, SECTION_LABEL } from '@/lib/styles'
 import { cn } from '@/lib/utils'
 
 // Last naming pass per host seen by this tab (a peer's /api/health is not reachable
@@ -61,7 +68,7 @@ export interface DetailsPanelProps {
 }
 
 const segItem =
-  'h-9 flex-1 gap-1.5 rounded-md px-3 text-[0.8125rem] text-muted-foreground data-[state=on]:bg-background data-[state=on]:text-foreground data-[state=on]:shadow-sm dark:data-[state=on]:bg-accent'
+  'h-9 flex-1 gap-1.5 rounded-full px-3 text-body-sm text-muted-foreground hover:bg-transparent hover:text-foreground data-[state=on]:bg-seg data-[state=on]:text-foreground data-[state=on]:shadow-[0_1px_2px_0_var(--shadow-tint-2),0_0_0_0.5px_var(--edge-strong)]'
 
 function Row({ label, hint, children }: { label: string; hint?: ReactNode; children: ReactNode }) {
   return (
@@ -75,12 +82,54 @@ function Row({ label, hint, children }: { label: string; hint?: ReactNode; child
   )
 }
 
+/** Session → Task: the task chip (a pin when linked by hand) and "Link task…" (the app-wide picker). */
+function TaskRow({ session: s, onPick }: { session: Session; onPick: () => void }) {
+  const { notConfigured, links } = useTasks()
+  const task = useSessionTask(s)
+  if (notConfigured) return null
+  const hint =
+    s.manualTask?.id === null
+      ? 'Unlinked by hand — no automatic link'
+      : task
+        ? `${links.manualSessions.has(`${s.host}/${s.session_id}`) ? 'Linked by hand' : 'Linked automatically'}: ${task.title}`
+        : 'Not linked — the first prompt or the most mentioned task links it'
+  return (
+    <Row label="Task" hint={hint}>
+      <TaskChip session={s} />
+      <Button variant="outline" className="h-9 px-3" onClick={onPick}>
+        <Link2Icon />
+        {task ? 'Change…' : 'Link task…'}
+      </Button>
+    </Row>
+  )
+}
+
 function Section({ title, children }: { title: string; children: ReactNode }) {
   return (
-    <section className="py-1">
-      <h3 className="pt-2 pb-1 text-[0.6875rem] font-semibold tracking-wider text-dimmer uppercase">{title}</h3>
-      <div className="divide-y divide-border/60">{children}</div>
+    <section className="pt-4">
+      <h3 className={cn(SECTION_LABEL, 'px-1 pb-2')}>{title}</h3>
+      <div className={cn(INSET_GROUP, 'divide-y divide-hairline px-3.5')}>{children}</div>
     </section>
+  )
+}
+
+/** The session's running subagents: each one's job, then type · model · running for · background / foreground. */
+function SubagentsSection({ session }: { session: Session | null }) {
+  const now = useNow(10_000)
+  const list = runningSubagents(session)
+  if (!list.length) return null
+  return (
+    <Section title={subagentsCountLabel(list.length)}>
+      {list.map((a) => (
+        <div key={a.id} className="flex min-w-0 items-start gap-2 py-2">
+          <BotIcon className="mt-0.5 size-3.5 shrink-0 text-status-busy" aria-hidden />
+          <div className="min-w-0">
+            <div className="text-sm break-words">{subagentJob(a)}</div>
+            <div className="truncate text-xs text-dimmer tabular-nums">{subagentMeta(a, now)}</div>
+          </div>
+        </div>
+      ))}
+    </Section>
   )
 }
 
@@ -105,7 +154,7 @@ export function DetailsDrawer(p: DetailsPanelProps) {
 }
 
 /**
- * Details: header (name, host · cwd, context, open in editor), the Brief (summary, todos,
+ * Details: header (name, host · cwd, context, open in editor), running subagents, the Brief (summary, todos,
  * resources, continue), View (chat / terminal, scrollback), Session (attach,
  * auto-name, ids, close). `drawer` = inside the mobile drawer; `panel` = the desktop
  * details column (click-to-confirm wording, ✕ to close, no drawer chrome).
@@ -212,7 +261,7 @@ export function DetailsPanel(p: DetailsPanelProps & { variant: 'drawer' | 'panel
         >
           <Header className={panel ? 'flex flex-row items-start gap-1 pt-3 pb-1 text-left' : 'flex flex-row items-start gap-1 px-0 pt-3 pb-1 text-left'}>
             <div className="flex min-w-0 flex-1 flex-col gap-0.5">
-              <Title className="truncate text-left text-base font-semibold">{s ? title : p.id.slice(0, 8)}</Title>
+              <Title className="truncate text-left text-lg font-semibold tracking-(--tracking-heading)">{s ? title : p.id.slice(0, 8)}</Title>
               <Description className={cn('truncate text-left font-mono text-xs', panel && 'text-muted-foreground')} title={panel ? (s?.cwd ?? undefined) : undefined}>
                 {[p.host, s?.cwd ? shortCwd(s.cwd, 60) : null].filter(Boolean).join(' · ')}
               </Description>
@@ -224,7 +273,7 @@ export function DetailsPanel(p: DetailsPanelProps & { variant: 'drawer' | 'panel
               ) : null}
             </div>
             {panel && p.onClose ? (
-              <Button variant="ghost" size="icon" aria-label="Close details" title={withHint('Close', 'inspector')} onClick={p.onClose} className="-mr-2 size-10 shrink-0 rounded-xl">
+              <Button variant="ghost" size="icon" aria-label="Close details" title={withHint('Close', 'inspector')} onClick={p.onClose} className="-mr-2 size-9 shrink-0 rounded-full text-muted-foreground">
                 <XIcon className="size-[1.125rem]" />
               </Button>
             ) : null}
@@ -232,13 +281,15 @@ export function DetailsPanel(p: DetailsPanelProps & { variant: 'drawer' | 'panel
 
           {/* A desktop editor link makes no sense on a phone: hidden on touch-first screens. */}
           {editorText && p.editor?.url ? (
-            <Button asChild variant="outline" className="mt-2 mb-1 h-9 w-full justify-start rounded-lg px-3 text-sm pointer-coarse:hidden">
+            <Button asChild variant="outline" className="mt-3 mb-1 h-10 w-full justify-start rounded-xl px-3.5 text-sm pointer-coarse:hidden">
               <a href={p.editor.url} title={p.editor.url}>
                 <CodeXmlIcon />
                 {editorText}
               </a>
             </Button>
           ) : null}
+
+          <SubagentsSection session={s} />
 
           <BriefSection {...p.brief} desktop={panel} cancelEditRef={p.cancelEditRef} />
 
@@ -248,9 +299,9 @@ export function DetailsPanel(p: DetailsPanelProps & { variant: 'drawer' | 'panel
                 type="single"
                 value={p.mode}
                 onValueChange={(v) => v && p.onMode(v as DetailMode)}
-                spacing={0}
+                spacing={0.5}
                 aria-label="View mode"
-                className="w-full rounded-lg bg-muted p-1"
+                className="w-full rounded-full bg-fill p-1"
               >
                 <ToggleGroupItem value="chat" className={segItem}>
                   <MessageSquareTextIcon /> Chat
@@ -266,8 +317,8 @@ export function DetailsPanel(p: DetailsPanelProps & { variant: 'drawer' | 'panel
                   type="single"
                   value={String(p.termLines)}
                   onValueChange={(v) => v && p.onTermLines(Number(v))}
-                  spacing={0}
-                  className="rounded-lg bg-muted p-1"
+                  spacing={0.5}
+                  className="rounded-full bg-fill p-1"
                 >
                   {[200, 600].map((n) => (
                     <ToggleGroupItem key={n} value={String(n)} className={cn(segItem, 'h-8 flex-none px-3 tabular-nums')}>
@@ -280,6 +331,16 @@ export function DetailsPanel(p: DetailsPanelProps & { variant: 'drawer' | 'panel
           </Section>
 
           <Section title="Session">
+            {s?.session_id ? (
+              <TaskRow
+                session={s}
+                onPick={() => {
+                  // The drawer goes first: the picker is a dialog of its own.
+                  if (!panel) p.onOpenChange(false)
+                  openTaskPicker(s)
+                }}
+              />
+            ) : null}
             {p.stack ? (
               'onOpen' in p.stack ? (
                 <Row label="Session stack" hint={p.stack.label ?? undefined}>

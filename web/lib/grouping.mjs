@@ -49,6 +49,7 @@ export const DISABLED_GROUPS = Object.freeze({
   updatedAt: null,
   lastRun: null,
   groups: [],
+  defaultGroup: null,
 });
 
 /**
@@ -133,7 +134,7 @@ export function createGrouper({
   }
 
   /**
-   * A change made on the board (`cli.groupEdit`: rename a group, move a session). Waits for a
+   * A change made on the board (`cli.groupEdit`: rename a group, move a session, set the default). Waits for a
    * running pass — which would otherwise save over the edit — and edits run one at a time.
    * Resolves the response; throws the CLI's error (`refused: true` = bad id/label).
    */
@@ -192,6 +193,8 @@ export function createGrouper({
       updatedAt: report?.updatedAt ?? null,
       lastRun,
       groups: publicGroups(report),
+      // The default group's id (sessions no group claims go there), null when none.
+      defaultGroup: typeof report?.defaultGroup === 'string' ? report.defaultGroup : null,
     };
   }
 

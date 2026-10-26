@@ -222,7 +222,7 @@ export function OperatorScreen({ layout = 'screen' }: { layout?: 'screen' | 'pan
           if (autoSpeak) speech.stop()
           setAutoSpeak(!autoSpeak)
         }}
-        className="size-11 shrink-0 rounded-xl"
+        className="size-11 shrink-0 rounded-full"
         disabled={!canSpeak}
       >
         {autoSpeak && canSpeak ? <Volume2Icon className="size-5" /> : <VolumeXIcon className="size-5" />}
@@ -233,7 +233,7 @@ export function OperatorScreen({ layout = 'screen' }: { layout?: 'screen' | 'pan
         aria-label={`Reading speed ${rate}×`}
         title="Reading speed (tap to change)"
         onClick={() => setRate(nextRate(rate))}
-        className="size-11 shrink-0 rounded-xl text-sm font-semibold tabular-nums"
+        className="size-11 shrink-0 rounded-full text-sm font-semibold tabular-nums"
         disabled={!canSpeak}
       >
         {rate}×
@@ -244,7 +244,7 @@ export function OperatorScreen({ layout = 'screen' }: { layout?: 'screen' | 'pan
         aria-label={announce ? 'Announce waiting sessions: on' : 'Announce waiting sessions: off'}
         title={announce ? 'Sessions that start waiting on you are announced' : 'Waiting sessions are not announced'}
         onClick={() => setAnnounce(!announce)}
-        className="size-11 shrink-0 rounded-xl"
+        className="size-11 shrink-0 rounded-full"
         disabled={!canSpeak}
       >
         {announce && canSpeak ? <BellIcon className="size-5" /> : <BellOffIcon className="size-5" />}
@@ -274,12 +274,12 @@ export function OperatorScreen({ layout = 'screen' }: { layout?: 'screen' | 'pan
         {messages && !turns.length ? <p className="py-10 text-center text-sm text-muted-foreground">Ask what the fleet is doing, who is waiting on you, what is next.</p> : null}
         {turns.map((t) =>
           t.role === 'user' ? (
-            <div key={t.key} className="ml-auto max-w-[85%] rounded-2xl rounded-br-md bg-primary px-3.5 py-2 text-[0.9375rem] [overflow-wrap:anywhere] text-primary-foreground">
+            <div key={t.key} className="ml-auto max-w-[85%] rounded-2xl rounded-br-md bg-primary px-3.5 py-2 text-md [overflow-wrap:anywhere] text-primary-foreground">
               {t.text}
             </div>
           ) : (
             <div key={t.key} className="group mr-auto flex max-w-[92%] items-start gap-1.5">
-              <div className="min-w-0 overflow-hidden rounded-2xl rounded-bl-md bg-muted px-3.5 py-2 text-[0.9375rem] [overflow-wrap:anywhere]">
+              <div className="min-w-0 overflow-hidden rounded-2xl rounded-bl-md bg-muted px-3.5 py-2 text-md [overflow-wrap:anywhere]">
                 <Markdown text={t.text} />
               </div>
               <SpeakButton text={t.text} id={`operator:${t.key}`} className="mt-1 shrink-0" />
@@ -367,14 +367,14 @@ export function OperatorScreen({ layout = 'screen' }: { layout?: 'screen' | 'pan
       <section aria-label="Operator" className="flex h-full min-w-0 flex-1 flex-col bg-background">
         <header
           data-tauri-drag-region="deep"
-          className="titlebar titlebar-lead flex shrink-0 items-center gap-1 border-b py-1.5 pr-2 pl-4 [--titlebar-pad:1rem]"
+          className="titlebar titlebar-lead flex shrink-0 items-center gap-1 py-2.5 pr-3 pl-6 [--titlebar-pad:1.5rem]"
         >
-          <h1 className="flex min-w-0 flex-1 items-center gap-1.5 text-[0.9375rem] leading-tight font-bold">
+          <h1 className="flex min-w-0 flex-1 items-center gap-1.5 text-xl leading-tight font-bold tracking-(--tracking-display)">
             <AudioLinesIcon className="size-4 text-muted-foreground" /> Operator
             {status?.host ? <span className="font-normal text-muted-foreground">· {status.host}</span> : null}
           </h1>
           {toggles}
-          <Button variant="ghost" size="icon" aria-label="Close operator" title="Close (Esc)" onClick={back} className="size-11 shrink-0 rounded-xl">
+          <Button variant="ghost" size="icon" aria-label="Close operator" title="Close (Esc)" onClick={back} className="size-11 shrink-0 rounded-full">
             <XIcon className="size-5" />
           </Button>
         </header>
@@ -388,10 +388,10 @@ export function OperatorScreen({ layout = 'screen' }: { layout?: 'screen' | 'pan
     <div ref={screenRef} className="flex h-app flex-col overflow-x-clip bg-background">
       <ScreenHeader>
         <div className="-ml-2 flex min-h-8 items-center gap-1">
-          <Button variant="ghost" size="icon" aria-label="Back" onClick={back} className="-my-1.5 size-11 shrink-0 rounded-xl">
+          <Button variant="ghost" size="icon" aria-label="Back" onClick={back} className="-my-1.5 size-11 shrink-0 rounded-full">
             <ChevronLeftIcon className="size-6" />
           </Button>
-          <h1 className="min-w-0 flex-1 truncate text-xl font-bold tracking-tight">
+          <h1 className="min-w-0 flex-1 truncate text-2xl font-bold tracking-(--tracking-display)">
             Operator{status?.host ? <span className="ml-1.5 text-sm font-normal text-muted-foreground">{status.host}</span> : null}
           </h1>
           {toggles}

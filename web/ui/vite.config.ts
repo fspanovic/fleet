@@ -15,5 +15,18 @@ export default defineConfig({
   server: {
     proxy: { '/api': { target, changeOrigin: true } },
   },
-  build: { outDir: 'dist', emptyOutDir: true },
+  build: {
+    outDir: 'dist',
+    emptyOutDir: true,
+    rolldownOptions: {
+      output: {
+        // React in a chunk of its own: an app-only change keeps its name, so after a deploy it
+        // still comes from the cache (hashed assets are immutable, web/lib/app.mjs). Screens and
+        // on-demand dialogs are split with dynamic imports (src/lib/lazy.ts).
+        codeSplitting: {
+          groups: [{ name: 'react', test: /[\\/]node_modules[\\/](react|react-dom|scheduler)[\\/]/ }],
+        },
+      },
+    },
+  },
 })

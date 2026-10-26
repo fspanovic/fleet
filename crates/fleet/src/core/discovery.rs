@@ -14,6 +14,19 @@ pub fn claude_home() -> PathBuf {
     dirs::home_dir().unwrap_or_default().join(".claude")
 }
 
+/// Claude Code's registry status for a session that is idle at the prompt (turn
+/// over, nothing asked of the user) while a background task — a Monitor, a
+/// background Bash — still runs. Passed through as is in every JSON output; sorted,
+/// counted and notified like `idle` ([`is_idle_status`]), but automation that kills
+/// or clears a session (job auto-close) waits for plain `idle`.
+pub const SHELL: &str = "shell";
+
+/// `idle`, or `shell` (idle with a background task running): the session's turn
+/// is over and it sits at the prompt.
+pub fn is_idle_status(status: &str) -> bool {
+    status == "idle" || status == SHELL
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum Backend {
@@ -41,6 +54,8 @@ pub struct Session {
     pub session_id: Option<String>,
     pub name: Option<String>,
     pub cwd: Option<String>,
+    /// The registry status, raw: `busy` | `idle` | `waiting` | `shell` (idle with a
+    /// background task running) | `unknown`.
     pub status: String,
     /// Milliseconds since the epoch of the last status update.
     pub updated_at: Option<i64>,
@@ -59,6 +74,11 @@ pub struct Session {
     /// Registry `waitingFor`: what a `waiting` session is blocked on.
     pub waiting_for: Option<String>,
     pub title: Option<String>,
+    /// The slash command (`/name`, arguments left out) whose expansion is the first
+    /// prompt — `title` — when that prompt came from one (Claude only; `null` otherwise).
+    /// Claude Code logs `<command-name>/name</command-name>` as its own user message,
+    /// which `title` skips; this keeps what it skipped. See [`first_prompt_in`].
+    pub first_command: Option<String>,
     /// The LLM-generated title — what the work *is*, not where it lives. Filled
     /// in from `~/.claude/fleet-names.json` and the dashboard's background
     /// titling pass, never by the registry, and deliberately independent of both
@@ -87,6 +107,13 @@ pub struct Session {
     pub transcript: Option<String>,
     /// The [job](crate::core::jobs) run that started it (`{ job, run }`); `null` when none.
     pub origin: Option<crate::core::jobs::Origin>,
+    /// The subagents (Agent / Task tool) it is running right now, oldest first;
+    /// `[]` when none (always for Codex / pi). See [`crate::core::subagents`].
+    pub subagents: Vec<crate::core::subagents::Subagent>,
+    /// The [workspace](crate::core::workspace) it runs in — a worktree fleet made for it
+    /// (`{ handle, branch, path, repo, base, named }`); `null` when none. Stamped by `list`
+    /// (read-only); `None` inside discovery.
+    pub workspace: Option<crate::core::workspace::WorkspaceRef>,
 }
 
 impl Default for Session {
@@ -106,6 +133,7 @@ impl Default for Session {
             name_source: None,
             waiting_for: None,
             title: None,
+            first_command: None,
             gen_title: None,
             display_title: None,
             host: None,
@@ -115,6 +143,8 @@ impl Default for Session {
             model: None,
             transcript: None,
             origin: None,
+            subagents: Vec::new(),
+            workspace: None,
         }
     }
 }
@@ -137,6 +167,18 @@ impl Session {
     /// Is this session blocked on the user right now?
     pub fn is_waiting(&self) -> bool {
         self.status == "waiting"
+    }
+
+    /// Is this session done with its turn and sitting at the prompt? True for
+    /// `idle` and for `shell` (idle with a background task still running).
+    pub fn is_idle(&self) -> bool {
+        is_idle_status(&self.status)
+    }
+
+    /// Idle at the prompt while a background task (a Monitor, a background Bash)
+    /// still runs — Claude Code's `shell` status.
+    pub fn has_background_task(&self) -> bool {
+        self.status == SHELL
     }
 
     /// What every view puts on a row: the session's one title,
@@ -215,6 +257,9 @@ struct Reg {
     /// How this session was started — `"cli"` for a terminal, `"sdk-cli"` for a
     /// `claude -p` child. See [`is_headless`].
     entrypoint: Option<String>,
+    /// When the process started, ms since the epoch.
+    #[serde(rename = "startedAt")]
+    started_at: Option<i64>,
 }
 
 /// One tmux pane, as reported by `list-panes -a`.
@@ -302,18 +347,31 @@ pub fn discover_checked() -> Result<Vec<Session>, String> {
             .map(|p| p.session_name.clone())
             .filter(|w| !w.is_empty());
         let origin = pane.and_then(|p| crate::core::jobs::Origin::parse(&p.job_run));
-        let title = match (reg.session_id.as_deref(), reg.cwd.as_deref()) {
+        let first = match (reg.session_id.as_deref(), reg.cwd.as_deref()) {
             (Some(sid), Some(cwd)) => title_for(cwd, sid),
-            _ => None,
+            _ => FirstPrompt::default(),
         };
         let context = reg.session_id.as_deref().and_then(|sid| {
             crate::core::context::for_session(&claude_home(), reg.cwd.as_deref(), sid)
         });
+        let subagents = reg
+            .session_id
+            .as_deref()
+            .map(|sid| {
+                crate::core::subagents::for_session(
+                    &claude_home(),
+                    reg.cwd.as_deref(),
+                    sid,
+                    reg.started_at,
+                )
+            })
+            .unwrap_or_default();
         out.push(Session {
             pid,
             status: reg.status.unwrap_or_else(|| "unknown".into()),
             updated_at: reg.status_updated_at.or(reg.updated_at),
-            title,
+            title: first.title,
+            first_command: first.command,
             tty: Some(tty),
             backend,
             handle,
@@ -333,6 +391,8 @@ pub fn discover_checked() -> Result<Vec<Session>, String> {
             harness: Harness::Claude,
             transcript: None,
             origin,
+            subagents,
+            workspace: None,
         });
     }
     crate::core::context::apply_native_1m(out.iter_mut().filter_map(|s| s.context.as_mut()));
@@ -753,12 +813,34 @@ pub(crate) fn encode_cwd(cwd: &str) -> String {
 }
 
 /// Title = the session's first genuine user prompt from its transcript.
-fn title_for(cwd: &str, session_id: &str) -> Option<String> {
+fn title_for(cwd: &str, session_id: &str) -> FirstPrompt {
     let file = claude_home()
         .join("projects")
         .join(encode_cwd(cwd))
         .join(format!("{session_id}.jsonl"));
-    let text = std::fs::read_to_string(&file).ok()?;
+    std::fs::read_to_string(&file)
+        .map(|text| first_prompt_in(&text))
+        .unwrap_or_default()
+}
+
+/// A Claude session's first prompt and the slash command that produced it.
+#[derive(Debug, Default, PartialEq, Eq)]
+pub struct FirstPrompt {
+    pub title: Option<String>,
+    pub command: Option<String>,
+}
+
+/// The first prompt of a Claude transcript (the first user text that is not markup
+/// or a path, within the first 400 lines), and the slash command it came from.
+///
+/// A slash command is logged as two user messages: `<command-name>/name</command-name>`
+/// (skipped as markup), then its expansion (a skill's `Base directory for this skill: …`,
+/// a command's body), which becomes the title. So the command is the `<command-name>`
+/// of the skipped message right before the title; any other skipped text in between
+/// (a local command's `<local-command-stdout>`, a pasted path) drops it — `/model`
+/// followed by a typed prompt did not start that prompt.
+pub fn first_prompt_in(text: &str) -> FirstPrompt {
+    let mut command: Option<String> = None;
     for line in text.lines().take(400) {
         if !line.contains("\"type\":\"user\"") {
             continue;
@@ -771,27 +853,116 @@ fn title_for(cwd: &str, session_id: &str) -> Option<String> {
         }
         let content = &v["message"]["content"];
         let t = if let Some(s) = content.as_str() {
-            s.to_string()
+            s
         } else if let Some(arr) = content.as_array() {
             arr.iter()
                 .find(|b| b["type"] == "text")
                 .and_then(|b| b["text"].as_str())
                 .unwrap_or("")
-                .to_string()
         } else {
-            String::new()
+            ""
         };
         let t = t.trim();
-        if !t.is_empty() && !t.starts_with('<') && !t.starts_with('/') {
-            return Some(t.to_string());
+        if t.is_empty() {
+            continue;
         }
+        if !t.starts_with('<') && !t.starts_with('/') {
+            return FirstPrompt {
+                title: Some(t.to_string()),
+                command,
+            };
+        }
+        command = command_name(t);
     }
-    None
+    FirstPrompt::default()
+}
+
+/// `/name` from a `<command-name>/name</command-name>` message; `None` for anything else.
+fn command_name(t: &str) -> Option<String> {
+    let start = t.find("<command-name>")? + "<command-name>".len();
+    let len = t[start..].find("</command-name>")?;
+    let name = t[start..start + len].trim();
+    (name.len() > 1 && name.starts_with('/') && !name.contains(char::is_whitespace))
+        .then(|| name.to_string())
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn user(content: serde_json::Value) -> String {
+        serde_json::json!({ "type": "user", "message": { "role": "user", "content": content } })
+            .to_string()
+    }
+
+    #[test]
+    fn a_slash_command_is_the_first_prompts_command() {
+        // As Claude Code logs a skill: a pasted path first, then the command, then its
+        // expansion (a text block, `isMeta`), which is the title.
+        let text = [
+            user(serde_json::json!("/tmp/uploads/pasted.png")),
+            r#"{"type":"assistant","message":{"role":"assistant","content":"ok"}}"#.to_string(),
+            user(serde_json::json!([{ "type": "tool_result", "content": "x" }])),
+            user(serde_json::json!(
+                "<command-message>p-x:start</command-message>\n<command-name>/p-x:start</command-name>"
+            )),
+            user(serde_json::json!([{ "type": "text", "text": "Base directory for this skill: ~/.claude/plugins/p-x/skills/start\n\n# Start" }])),
+            user(serde_json::json!("later")),
+        ]
+        .join("\n");
+        let first = first_prompt_in(&text);
+        assert_eq!(first.command.as_deref(), Some("/p-x:start"));
+        assert!(
+            first
+                .title
+                .as_deref()
+                .is_some_and(|t| t.starts_with("Base directory for this skill:"))
+        );
+    }
+
+    #[test]
+    fn a_command_with_arguments_is_named_without_them() {
+        let text = [
+            user(serde_json::json!("<command-message>review</command-message>\n<command-name>/review</command-name>\n<command-args>42</command-args>")),
+            user(serde_json::json!("Review PR 42")),
+        ]
+        .join("\n");
+        assert_eq!(
+            first_prompt_in(&text),
+            FirstPrompt {
+                title: Some("Review PR 42".into()),
+                command: Some("/review".into())
+            }
+        );
+    }
+
+    #[test]
+    fn a_typed_prompt_has_no_command() {
+        // A local command (`/model`) before a typed prompt did not start it.
+        let text = [
+            user(serde_json::json!("<command-name>/model</command-name>")),
+            user(serde_json::json!(
+                "<local-command-stdout>Set model</local-command-stdout>"
+            )),
+            user(serde_json::json!("fix the login redirect")),
+        ]
+        .join("\n");
+        assert_eq!(
+            first_prompt_in(&text),
+            FirstPrompt {
+                title: Some("fix the login redirect".into()),
+                command: None
+            }
+        );
+        assert_eq!(
+            first_prompt_in(&user(serde_json::json!("hi"))).command,
+            None
+        );
+        assert_eq!(first_prompt_in(""), FirstPrompt::default());
+        assert_eq!(command_name("<command-name>  </command-name>"), None);
+        assert_eq!(command_name("<command-name>/a b</command-name>"), None);
+        assert_eq!(command_name("<command-name>/a"), None);
+    }
 
     // `ask_claude` shells out to `claude -p`, and that child registers itself as a
     // live `interactive` session in `$TMPDIR`. Titling the fleet would otherwise
@@ -1013,5 +1184,26 @@ mod tests {
         assert!(s.is_derived_name());
         s.name_source = Some("user".into());
         assert!(!s.is_derived_name());
+    }
+
+    // Claude Code writes `shell` for an idle session whose background task (a
+    // Monitor, a background Bash) still runs: idle for every behaviour, and the
+    // one status that says a task is running behind the prompt.
+    #[test]
+    fn shell_is_idle_with_a_background_task() {
+        let mut s = Session::default();
+        for (status, idle, bg) in [
+            ("idle", true, false),
+            ("shell", true, true),
+            ("busy", false, false),
+            ("waiting", false, false),
+            ("unknown", false, false),
+        ] {
+            s.status = status.into();
+            assert_eq!(s.is_idle(), idle, "{status}");
+            assert_eq!(is_idle_status(status), idle, "{status}");
+            assert_eq!(s.has_background_task(), bg, "{status}");
+            assert!(!s.is_waiting() || status == "waiting", "{status}");
+        }
     }
 }

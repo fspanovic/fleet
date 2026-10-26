@@ -139,7 +139,7 @@ export function BriefSection({ host, brief: st, fileLinks, onContinue, desktop =
           data-vaul-no-drag
           spellCheck={false}
           className={cn(
-            'w-full resize-y rounded-lg border border-input bg-card px-3 py-2 font-mono text-[0.8125rem] leading-relaxed outline-none',
+            'w-full resize-y rounded-lg border border-input bg-card px-3 py-2 font-mono text-body-sm leading-relaxed outline-none',
             'focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50',
             desktop ? 'h-[60vh] min-h-48' : 'h-[50vh]',
           )}
@@ -158,7 +158,7 @@ export function BriefSection({ host, brief: st, fileLinks, onContinue, desktop =
     )
   } else if (!b) {
     body = st.error ? (
-      <p className="flex items-start gap-2 rounded-lg border border-destructive/40 bg-destructive/10 px-3 py-2 text-xs text-destructive">
+      <p className="flex items-start gap-2 rounded-xl bg-destructive/10 px-3 py-2 text-xs text-destructive">
         <CircleAlertIcon className="mt-px size-3.5 shrink-0" />
         <span className="break-words">{st.error}</span>
       </p>
@@ -206,7 +206,7 @@ export function BriefSection({ host, brief: st, fileLinks, onContinue, desktop =
           {todos.length ? (
             <Part title="Todos" aside={progress ? <span className="tabular-nums">{`${progress.done}/${progress.total}`}</span> : null}>
               {progress ? (
-                <div className="mb-2 h-1 overflow-hidden rounded-full bg-muted" aria-hidden>
+                <div className="mb-2 h-1 overflow-hidden rounded-full bg-fill-strong" aria-hidden>
                   <div className="h-full rounded-full bg-primary/70 transition-[width]" style={{ width: `${(progress.done / progress.total) * 100}%` }} />
                 </div>
               ) : null}
@@ -219,7 +219,7 @@ export function BriefSection({ host, brief: st, fileLinks, onContinue, desktop =
                       aria-checked={item.done}
                       aria-label={item.done ? `Mark not done: ${item.text}` : `Mark done: ${item.text}`}
                       onClick={() => void st.toggleTodo(i)}
-                      className="-ml-1.5 flex size-8 shrink-0 items-center justify-center rounded-md text-muted-foreground outline-none hover:bg-muted focus-visible:ring-3 focus-visible:ring-ring/50 active:bg-muted"
+                      className="-ml-1.5 flex size-8 shrink-0 items-center justify-center rounded-md text-muted-foreground outline-none hover:bg-fill focus-visible:ring-3 focus-visible:ring-ring/50 active:bg-fill-strong"
                     >
                       {item.done ? <SquareCheckBigIcon className="size-[1.125rem] text-primary" /> : <SquareIcon className="size-[1.125rem]" />}
                     </button>
@@ -249,9 +249,9 @@ export function BriefSection({ host, brief: st, fileLinks, onContinue, desktop =
   }
 
   return (
-    <section aria-label="Brief" className="py-1">
-      <div className="flex items-center gap-1 pt-1 pb-1.5">
-        <h3 className="text-[0.6875rem] font-semibold tracking-wider text-dimmer uppercase">Brief</h3>
+    <section aria-label="Brief" className="pt-4">
+      <div className="flex items-center gap-1 px-1 pb-1.5">
+        <h3 className="text-2xs font-semibold tracking-[0.08em] text-dimmer uppercase">Brief</h3>
         <span className="min-w-0 flex-1 truncate pl-1 text-xs text-dimmer tabular-nums">
           {busy
             ? 'updating…'
@@ -272,17 +272,17 @@ export function BriefSection({ host, brief: st, fileLinks, onContinue, desktop =
               title="Regenerate (asks the model)"
               disabled={busy || !b}
               onClick={() => void st.regenerate()}
-              className="size-9 shrink-0 rounded-lg"
+              className="size-8 shrink-0 rounded-full text-muted-foreground"
             >
               {busy ? <Loader2Icon className="animate-spin" /> : <RefreshCwIcon />}
             </Button>
-            <Button variant="ghost" size="icon" aria-label="Edit brief" title="Edit" disabled={!b} onClick={startEdit} className="size-9 shrink-0 rounded-lg">
+            <Button variant="ghost" size="icon" aria-label="Edit brief" title="Edit" disabled={!b} onClick={startEdit} className="size-8 shrink-0 rounded-full text-muted-foreground">
               <PencilIcon />
             </Button>
           </>
         ) : null}
       </div>
-      {body}
+      <div className="rounded-2xl bg-card px-4 pt-3.5 pb-2 shadow-float">{body}</div>
     </section>
   )
 }
@@ -365,7 +365,7 @@ function WorktreesGroup({ worktrees, editor }: { worktrees: BriefWorktree[]; edi
         {worktrees.map((w) => (
           <li key={w.path} className={cn(rowClass, 'items-center')}>
             <FolderGit2Icon className="size-4 shrink-0 text-dimmer" />
-            <span className="min-w-0 flex-1 font-mono text-[0.8125rem] [overflow-wrap:anywhere]" title={w.path}>
+            <span className="min-w-0 flex-1 font-mono text-body-sm [overflow-wrap:anywhere]" title={w.path}>
               <span className={cn('select-all', w.branch ? 'text-foreground' : 'text-dimmer')}>{w.branch ?? 'detached'}</span>
               <span className="text-muted-foreground"> · {w.linked ? 'worktree' : 'repo'} </span>
               <span className="text-muted-foreground select-all">{w.display}</span>
@@ -413,7 +413,7 @@ function ResourceRow({ r, fileLinks }: { r: BriefResource; fileLinks: FileStats 
     return (
       <li className={rowClass}>
         {icon}
-        <span className="min-w-0 font-mono text-[0.8125rem] [overflow-wrap:anywhere]">
+        <span className="min-w-0 font-mono text-body-sm [overflow-wrap:anywhere]">
           <span className={cn('select-all', branch ? 'text-foreground' : 'text-dimmer')}>{branch ?? 'detached'}</span>
           {where ? <span className="text-muted-foreground"> · {where}</span> : null}
         </span>
@@ -430,12 +430,12 @@ function ResourceRow({ r, fileLinks }: { r: BriefResource; fileLinks: FileStats 
           type="button"
           onClick={() => fileLinks.api.open(r.path as string, 'code')}
           title={`Preview ${path}`}
-          className="min-w-0 cursor-pointer text-left font-mono text-[0.8125rem] break-all text-foreground underline decoration-primary/35 decoration-dotted underline-offset-[3px] outline-none hover:decoration-primary hover:decoration-solid focus-visible:rounded-sm focus-visible:ring-2 focus-visible:ring-ring"
+          className="min-w-0 cursor-pointer text-left font-mono text-body-sm break-all text-foreground underline decoration-primary/35 decoration-dotted underline-offset-[3px] outline-none hover:decoration-primary hover:decoration-solid focus-visible:rounded-sm focus-visible:ring-2 focus-visible:ring-ring"
         >
           {path}
         </button>
       ) : (
-        <span className="min-w-0 font-mono text-[0.8125rem] break-all text-muted-foreground select-all">{path}</span>
+        <span className="min-w-0 font-mono text-body-sm break-all text-muted-foreground select-all">{path}</span>
       )}
     </li>
   )

@@ -11,13 +11,17 @@ import {
   resolveHost,
   sortSessions,
   statusRank,
+  isIdleStatus,
+  SHELL_STATUS,
   tailLines,
   validateKey,
   validateSendText,
+  validateTypeText,
+  dialogOpen,
 } from '../lib/util.mjs';
 import { resolveStaticPath, readJsonBody, contentTypeFor, HttpError } from '../lib/http.mjs';
 import { createBackend, BackendError, createScriptProvider, ITERM_SCRIPT, TYPE_CHUNK, typeChunks } from '../lib/backends.mjs';
-import { createFleet, trimTitle, TITLE_MAX } from '../lib/fleet.mjs';
+import { createFleet, promptLinks, PROMPT_LINKS_MAX, trimTitle, TITLE_MAX } from '../lib/fleet.mjs';
 import { createFleetCli } from '../lib/fleet-cli.mjs';
 import { ensurePath, ensureUtf8Locale } from '../lib/config.mjs';
 
@@ -75,6 +79,14 @@ test('statusRank orders waiting > busy > idle > unknown', () => {
   );
   assert.equal(statusRank('bogus'), 3);
   assert.equal(statusRank(undefined), 3);
+  // `shell`: idle with a background task running — ranks with idle.
+  assert.equal(statusRank('shell'), statusRank('idle'));
+});
+
+test('isIdleStatus: idle and shell (idle with a background task running)', () => {
+  assert.equal(isIdleStatus('idle'), true);
+  assert.equal(isIdleStatus(SHELL_STATUS), true);
+  for (const s of ['busy', 'waiting', 'unknown', '', null, undefined]) assert.equal(isIdleStatus(s), false, String(s));
 });
 
 test('sortSessions: waiting, busy, idle, unknown, then updated_at desc', () => {
@@ -85,10 +97,11 @@ test('sortSessions: waiting, busy, idle, unknown, then updated_at desc', () => {
     { session_id: 'w1', status: 'waiting', updated_at: 1 },
     { session_id: 'b2', status: 'busy', updated_at: 500 },
     { session_id: 'i2', status: 'idle', updated_at: 900 },
+    { session_id: 's1', status: 'shell', updated_at: 500 },
   ];
   assert.deepEqual(
     sortSessions(input).map((s) => s.session_id),
-    ['w1', 'b2', 'b1', 'i2', 'i1', 'u1'],
+    ['w1', 'b2', 'b1', 'i2', 's1', 'i1', 'u1'],
   );
 });
 
@@ -154,12 +167,34 @@ test('validateSendText enforces non-empty string <= 8000 chars', () => {
   assert.equal(validateSendText('x'.repeat(8001)).ok, false);
 });
 
-test('validateKey allows only Enter and Escape', () => {
-  assert.equal(validateKey('Enter').ok, true);
-  assert.equal(validateKey('Escape').ok, true);
+test('validateKey allows the keys Claude dialogs read, never Ctrl combinations', () => {
+  for (const k of ['Enter', 'Escape', 'Up', 'Down', 'Left', 'Right', 'Tab', 'BTab', 'Space', 'BSpace', 'Home', 'End', 'PageUp', 'PageDown']) {
+    assert.equal(validateKey(k).ok, true, k);
+  }
   assert.equal(validateKey('escape').ok, false);
   assert.equal(validateKey('C-c').ok, false);
+  assert.equal(validateKey('C-d').ok, false);
+  assert.equal(validateKey('a').ok, false);
   assert.equal(validateKey(undefined).ok, false);
+});
+
+test('validateTypeText takes short printable text only', () => {
+  assert.equal(validateTypeText('git').ok, true);
+  assert.equal(validateTypeText('é 1').ok, true);
+  assert.equal(validateTypeText('').ok, false);
+  assert.equal(validateTypeText(3).ok, false);
+  assert.equal(validateTypeText('a\nb').ok, false, 'a newline would submit');
+  assert.equal(validateTypeText('a\tb').ok, false);
+  assert.equal(validateTypeText('\x1b[A').ok, false);
+  assert.equal(validateTypeText('x'.repeat(200)).ok, true);
+  assert.equal(validateTypeText('x'.repeat(201)).ok, false);
+});
+
+test('dialogOpen: waiting on one of Claude\'s own dialogs only', () => {
+  assert.equal(dialogOpen({ status: 'waiting', waiting_for: 'dialog open' }), true);
+  assert.equal(dialogOpen({ status: 'waiting', waiting_for: 'permission prompt' }), false);
+  assert.equal(dialogOpen({ status: 'idle', waiting_for: 'dialog open' }), false);
+  assert.equal(dialogOpen(null), false);
 });
 
 // ------------------------------------------------------------------ static paths
@@ -315,6 +350,38 @@ test('tmux keys sends the bare key name', async () => {
   const backend = createBackend({ run, tmux: 'tmux', scriptPath: script, sleep: noSleep });
   await backend.keys({ backend: 'tmux', handle: '%1' }, 'Escape');
   assert.deepEqual(calls[0].args, ['send-keys', '-t', '%1', 'Escape']);
+  await backend.keys({ backend: 'tmux', handle: '%1' }, 'BTab');
+  await backend.keys({ backend: 'tmux', handle: '%1' }, 'PageUp');
+  await backend.keys({ backend: 'tmux', handle: '%1' }, 'PageDown');
+  assert.deepEqual(calls.slice(1).map((c) => c.args.at(-1)), ['BTab', 'PPage', 'NPage']);
+});
+
+test('iterm keys without a script mode of their own are written raw; an unknown key is refused, never Enter', async () => {
+  const { calls, run } = recorder(async () => ({ stdout: 'ok', stderr: '' }));
+  const backend = createBackend({ run, scriptPath: script, sleep: noSleep });
+  const session = { backend: 'iterm', handle: 'ABC-123' };
+  await backend.keys(session, 'Left');
+  await backend.keys(session, 'BTab');
+  await backend.keys(session, 'Space');
+  assert.deepEqual(calls.map((c) => c.args), [
+    ['/tmp/fake.applescript', 'type', 'ABC-123', '\x1b[D'],
+    ['/tmp/fake.applescript', 'type', 'ABC-123', '\x1b[Z'],
+    ['/tmp/fake.applescript', 'type', 'ABC-123', ' '],
+  ]);
+  await assert.rejects(() => backend.keys(session, 'F13'), (err) => err instanceof BackendError && err.status === 400);
+  assert.equal(calls.length, 3);
+});
+
+test('sendNow presses Ctrl+X Ctrl+S: one tmux send-keys, raw bytes on iTerm', async () => {
+  const { calls, run } = recorder(async () => ({ stdout: 'ok', stderr: '' }));
+  const backend = createBackend({ run, tmux: 'tmux', scriptPath: script, sleep: noSleep });
+  await backend.sendNow({ backend: 'tmux', handle: '%1' });
+  await backend.sendNow({ backend: 'iterm', handle: 'ABC-123' });
+  assert.deepEqual(calls.map((c) => c.args), [
+    ['send-keys', '-t', '%1', 'C-x', 'C-s'],
+    ['/tmp/fake.applescript', 'type', 'ABC-123', '\x18\x13'],
+  ]);
+  await assert.rejects(() => backend.sendNow({ backend: 'unknown', handle: 'x' }), (e) => e instanceof BackendError && e.status === 409);
 });
 
 test('iterm backend passes values as argv, never interpolated', async () => {
@@ -415,6 +482,39 @@ test('fleet trims session titles', async () => {
   assert.equal(host.sessions[0].title.length, TITLE_MAX + 1);
 });
 
+test('promptLinks: the distinct http(s) URLs of a prompt, trimmed and capped', () => {
+  const text =
+    'Task: https://app.example.com/1-acme/tasks/42.\nSee [doc](https://docs.example.com/a?b=1#c), <HTTPS://Example.com/x>, ' +
+    'again https://app.example.com/1-acme/tasks/42 "https://q.example/z" — not: http:// httpd ftp://x';
+  assert.deepEqual(promptLinks(text), [
+    'https://app.example.com/1-acme/tasks/42',
+    'https://docs.example.com/a?b=1#c',
+    'HTTPS://Example.com/x',
+    'https://q.example/z',
+  ]);
+  assert.deepEqual(promptLinks(null), []);
+  assert.deepEqual(promptLinks(''), []);
+  const many = Array.from({ length: 30 }, (_, i) => `https://x.example/${i}`).join(' ');
+  assert.equal(promptLinks(many).length, PROMPT_LINKS_MAX);
+});
+
+test('fleet adds promptLinks from the whole first prompt, before the title is trimmed', async () => {
+  // A slash command's expansion: its arguments (the link) come after TITLE_MAX characters.
+  const skill = `Base directory for this skill: /x\n\n${'z'.repeat(TITLE_MAX + 100)}\n\nARGUMENTS: https://app.example.com/1-acme/tasks/42`;
+  const rows = [
+    { session_id: 'a', status: 'idle', title: skill },
+    { session_id: 'b', status: 'idle', title: 'no links here' },
+    { session_id: 'c', status: 'idle', title: null },
+  ];
+  const run = async () => ({ stdout: JSON.stringify(rows), stderr: '' });
+  const host = await createFleet({ cli: createFleetCli({ run }), self: 'laptop' }).localHost();
+  const byId = Object.fromEntries(host.sessions.map((s) => [s.session_id, s]));
+  assert.ok(!byId.a.title.includes('tasks/42'));
+  assert.deepEqual(byId.a.promptLinks, ['https://app.example.com/1-acme/tasks/42']);
+  assert.equal('promptLinks' in byId.b, false);
+  assert.equal('promptLinks' in byId.c, false);
+});
+
 test('fleet passes context usage through untouched', async () => {
   const context = { used: 124000, window: 200000, pct: 62, model: 'claude-x' };
   const rows = [
@@ -426,6 +526,23 @@ test('fleet passes context usage through untouched', async () => {
   const byId = Object.fromEntries(host.sessions.map((s) => [s.session_id, s]));
   assert.deepEqual(byId.a.context, context);
   assert.equal(byId.b.context, null);
+});
+
+test('fleet passes running subagents through untouched', async () => {
+  const subagents = [
+    { id: 'a1', description: 'Fix the login bug', agent_type: 'general-purpose', model: 'opus', background: true, started_at: 1700000000000, last_active_at: 1700000060000, depth: 1, parent_agent_id: null },
+  ];
+  const rows = [
+    { session_id: 'a', status: 'busy', subagents },
+    { session_id: 'b', status: 'idle', subagents: [] },
+    { session_id: 'c', status: 'idle' },
+  ];
+  const run = async () => ({ stdout: JSON.stringify(rows), stderr: '' });
+  const host = await createFleet({ cli: createFleetCli({ run }), self: 'laptop' }).localHost();
+  const byId = Object.fromEntries(host.sessions.map((s) => [s.session_id, s]));
+  assert.deepEqual(byId.a.subagents, subagents);
+  assert.deepEqual(byId.b.subagents, []);
+  assert.equal(byId.c.subagents, undefined); // an older CLI: the UI treats it as none
 });
 
 test('fleet CLI is invoked as `<bin> list --json`', async () => {

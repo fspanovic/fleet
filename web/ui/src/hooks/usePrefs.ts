@@ -17,6 +17,9 @@ export interface PrefsState {
   /** Composer undo window in ms (0 = send at once), one of SEND_DELAYS. */
   sendDelay: number
   setSendDelay: (ms: number) => void
+  /** System notification when a session starts waiting on you (lib/notify.ts); default on. */
+  notifyWaiting: boolean
+  setNotifyWaiting: (v: boolean) => void
 }
 
 export const PrefsContext = createContext<PrefsState>({
@@ -28,6 +31,8 @@ export const PrefsContext = createContext<PrefsState>({
   setHideNotes: () => {},
   sendDelay: DEFAULT_SEND_DELAY,
   setSendDelay: () => {},
+  notifyWaiting: true,
+  setNotifyWaiting: () => {},
 })
 
 export function usePrefs(): PrefsState {

@@ -1,6 +1,6 @@
 import { createContext, useContext } from 'react'
 
-import type { ModelOption, QuickReply, SessionKey } from '@/api/types'
+import type { ModelOption, QuickReply, SessionKey, TaskQuickStart } from '@/api/types'
 import { DEFAULT_MODELS } from '@/lib/models'
 
 export interface SettingsState {
@@ -19,6 +19,8 @@ export interface SettingsState {
   /** This server reads replies aloud (POST /api/speak) and runs the voice operator. */
   speak: boolean
   operator: boolean
+  /** My tasks one-click starters (config `web.tasks.quickStart`), spawned on `self`. */
+  taskQuickStarts: TaskQuickStart[]
   loaded: boolean
 }
 
@@ -38,7 +40,7 @@ export const QUICK_KEYS: { label: string; key: SessionKey }[] = [
   { label: '↓', key: 'Down' },
 ]
 
-export const DEFAULT_SETTINGS: SettingsState = { self: null, hosts: [], quickReplies: DEFAULT_QUICK_REPLIES, uploadMaxMB: null, models: DEFAULT_MODELS, voice: false, speak: false, operator: false, loaded: false }
+export const DEFAULT_SETTINGS: SettingsState = { self: null, hosts: [], quickReplies: DEFAULT_QUICK_REPLIES, uploadMaxMB: null, models: DEFAULT_MODELS, voice: false, speak: false, operator: false, taskQuickStarts: [], loaded: false }
 
 export const SettingsContext = createContext<SettingsState>(DEFAULT_SETTINGS)
 

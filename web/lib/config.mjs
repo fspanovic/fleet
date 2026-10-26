@@ -7,7 +7,10 @@
 //            autoName: { enabled, intervalMinutes },
 //            grouping: { enabled, intervalMinutes }, uploads: { dir, maxMB, retentionDays },
 //            briefs: { enabled, model, idleMs, minIntervalMs, maxDeltaChars, maxCallsPerHour, … },
-//            stacks: { syncMinutes } },
+//            stacks: { syncMinutes },
+//            sessionStyles: [ { label, match: { command?, promptIncludes? }, color } ],
+//            tasks: { productive: { keychain: { service, account }, organizationId, personId, orgSlug },
+//                     quickStart: { label, prompt, dir, model, worktree } | [ … ] } },
 //     stacks: { enabled, model },         (read by the CLI; the server only reports them)
 //     grouping: { enabled, model, host },   (enabled/model are read by the CLI)
 //     tmux, fleetBin, claude, spawnDirs: [ { label, paths: { host: dir } } ] }
@@ -19,6 +22,7 @@ import os from 'node:os';
 import path from 'node:path';
 
 import { DEFAULT_EDITOR, EDITORS } from './editor.mjs';
+import { normalizeTasksConfig } from './tasks.mjs';
 
 export const DEFAULT_PORT = 7777;
 export const DEFAULT_SELF = 'local';
@@ -73,6 +77,53 @@ export const DEFAULT_MODELS = [
   { id: 'claude-sonnet-5', label: 'Sonnet 5' },
   { id: 'claude-haiku-4-5-20251001', label: 'Haiku 4.5' },
 ];
+
+/**
+ * The palette names a `web.sessionStyles` colour may be — the UI's TASK_COLORS (ui/src/lib/tasks.ts,
+ * Productive's palette), which draws each in both modes on every theme; tests keep the two in step.
+ */
+export const SESSION_STYLE_COLORS = Object.freeze([
+  'azure', 'blue', 'burgundy', 'canary', 'celtic-blue', 'concrete', 'cyan', 'electric',
+  'fuchsia', 'green', 'lime-green', 'logan', 'orange', 'red', 'turquoise', 'yellow',
+]);
+export const SESSION_STYLES_MAX = 20;
+export const SESSION_STYLE_LABEL_MAX = 24;
+const SLASH_COMMAND_RE = /^\/[^\s/][^\s]{0,99}$/;
+
+/**
+ * `web.sessionStyles` → `[{ label, color, match: { command?, promptIncludes? } }]` ([] when unset).
+ * A rule matches a session when every key of its `match` does: `command` = the slash command that
+ * produced its first prompt (`first_command`, exact), `promptIncludes` = a case-insensitive
+ * substring of its first prompt as transported (the first 300 characters). A bad shape is a config error.
+ */
+export function normalizeSessionStyles(list) {
+  if (list == null) return [];
+  if (!Array.isArray(list)) throw new Error('config.web.sessionStyles must be an array of { label, match, color }');
+  if (list.length > SESSION_STYLES_MAX) throw new Error(`config.web.sessionStyles has more than ${SESSION_STYLES_MAX} entries`);
+  return list.map((r, i) => {
+    const at = `config.web.sessionStyles[${i}]`;
+    if (!isObject(r)) throw new Error(`${at} must be an object { label, match, color }`);
+    if (typeof r.label !== 'string' || !r.label.trim() || r.label.trim().length > SESSION_STYLE_LABEL_MAX) {
+      throw new Error(`${at}.label must be a non-empty string of at most ${SESSION_STYLE_LABEL_MAX} characters`);
+    }
+    if (!SESSION_STYLE_COLORS.includes(r.color)) throw new Error(`${at}.color must be one of ${SESSION_STYLE_COLORS.join(', ')}: ${r.color}`);
+    const m = r.match;
+    if (!isObject(m)) throw new Error(`${at}.match must be an object { command } or { promptIncludes }`);
+    const unknown = Object.keys(m).filter((k) => k !== 'command' && k !== 'promptIncludes');
+    if (unknown.length) throw new Error(`${at}.match has unknown keys: ${unknown.join(', ')} (allowed: command, promptIncludes)`);
+    const match = {};
+    if (m.command != null) {
+      if (typeof m.command !== 'string' || !SLASH_COMMAND_RE.test(m.command.trim())) throw new Error(`${at}.match.command must be a slash command like "/plugin:skill": ${m.command}`);
+      match.command = m.command.trim();
+    }
+    if (m.promptIncludes != null) {
+      if (typeof m.promptIncludes !== 'string' || !m.promptIncludes.trim()) throw new Error(`${at}.match.promptIncludes must be a non-empty string`);
+      match.promptIncludes = m.promptIncludes.trim();
+    }
+    if (!Object.keys(match).length) throw new Error(`${at}.match needs command or promptIncludes`);
+    return { label: r.label.trim(), color: r.color, match };
+  });
+}
 
 const BIN_FALLBACK_DIRS = ['/opt/homebrew/bin', '/usr/local/bin'];
 
@@ -203,7 +254,7 @@ export function resolveUiDir(uiRaw, { webRoot = null, home = os.homedir() } = {}
 /**
  * Turn the raw shared config into what the server needs:
  *   { self, port, bind, peers: { name: url }, sshHosts: { name: ssh }, hostAddrs: { name: hostname }, editor, editorSsh, hosts: [names], fleetBin, tmux, claude,
- *     spawnDirs: [{ label, path }], uiDir, quickReplies, models: [{ id, label }], autoName: { enabled, intervalMinutes },
+ *     spawnDirs: [{ label, path }], uiDir, quickReplies, models: [{ id, label }], sessionStyles: [{ label, color, match }], autoName: { enabled, intervalMinutes },
  *     grouping: { enabled, intervalMinutes, host }, uploads: { dir, maxMB, retentionDays },
  *     briefs: { enabled, model, idleMs, minIntervalMs, maxDeltaChars, maxCallsPerHour, minNewTurns,
  *               minNewChars, maxBriefChars, dir }, stacks: { sync, syncMinutes, generate, model },
@@ -303,6 +354,9 @@ export function normalizeConfig(
       return { id: r.id, label };
     });
   }
+
+  // web.sessionStyles: a label + colour for the sessions a rule matches (lib/fleet.mjs#sessionStyleFor).
+  const sessionStyles = normalizeSessionStyles(web.sessionStyles);
 
   // web.autoName: the periodic `fleet name --all --apply` pass (lib/autoname.mjs).
   const an = web.autoName == null ? {} : web.autoName;
@@ -409,6 +463,9 @@ export function normalizeConfig(
     };
   }
 
+  // web.tasks: the My tasks screen (lib/tasks.mjs) — off unless configured (or $PRODUCTIVE_AUTH_TOKEN).
+  const tasks = normalizeTasksConfig(web.tasks, env, { spawnDirs, home });
+
   // web.briefs: per-session briefs (lib/briefs.mjs) — the budget knobs for its model calls.
   const wb = web.briefs == null ? {} : web.briefs;
   if (!isObject(wb)) throw new Error('config.web.briefs must be an object { enabled, model, idleMs, minIntervalMs, maxDeltaChars, maxCallsPerHour }');
@@ -494,11 +551,13 @@ export function normalizeConfig(
     uiDir,
     quickReplies,
     models,
+    sessionStyles,
     autoName,
     grouping,
     uploads,
     files,
     notes,
+    tasks,
     briefs,
     stacks,
     restore,

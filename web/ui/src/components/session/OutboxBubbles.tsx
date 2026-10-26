@@ -3,6 +3,7 @@ import { CheckIcon, CircleAlertIcon, Loader2Icon, PencilIcon, RotateCcwIcon, Und
 
 import { useNow } from '@/hooks/useNow'
 import { secondsLeft, type OutboxItem } from '@/lib/outbox'
+import { BUBBLE_MINE, BUBBLE_MINE_FAILED, BUBBLE_MINE_PENDING } from '@/lib/styles'
 import { cn } from '@/lib/utils'
 
 export interface OutboxBubblesProps {
@@ -114,19 +115,15 @@ export function OutboxBubbles({ items, desktop = false, onUndo, onRetry, onEdit,
   )
   if (!shown.length) return live
   return (
-    <div className={cn('flex flex-col', strip ? 'gap-1' : 'gap-2.5 pt-2.5')}>
+    <div className={cn('flex flex-col', strip ? 'gap-1' : 'gap-2 pt-7')}>
       {live}
       {shown.map((it) => (
         <div key={it.id} className="flex w-full flex-col items-end" data-outbox={it.state}>
           {strip ? null : (
             <div
               className={cn(
-                'w-full rounded-2xl rounded-br-md border px-3 py-2 whitespace-pre-wrap text-accent-foreground transition-opacity [overflow-wrap:anywhere]',
-                it.state === 'failed'
-                  ? 'border-destructive/50 bg-accent/60'
-                  : it.state === 'sent'
-                    ? 'border-primary/25 bg-accent'
-                    : 'border-dashed border-primary/40 bg-accent/60 opacity-80',
+                it.state === 'failed' ? BUBBLE_MINE_FAILED : it.state === 'sent' ? BUBBLE_MINE : BUBBLE_MINE_PENDING,
+                'whitespace-pre-wrap transition-[background-color,box-shadow] duration-(--dur-base)',
               )}
             >
               {it.text}
@@ -135,7 +132,7 @@ export function OutboxBubbles({ items, desktop = false, onUndo, onRetry, onEdit,
           <div
             className={cn(
               'flex max-w-full min-w-0 items-center gap-1.5 text-dimmer',
-              strip ? 'w-full rounded-lg border bg-card px-2.5 py-1 text-xs' : 'px-1 pt-0.5 text-[0.6875rem]',
+              strip ? 'w-full rounded-full bg-card px-3 py-1 text-xs shadow-float' : 'px-2 pt-1 text-2xs',
             )}
           >
             {strip ? <span className="min-w-0 flex-1 truncate text-foreground/80">{it.text}</span> : null}

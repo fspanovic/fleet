@@ -1,4 +1,4 @@
-import type { UsageAccount, UsageLimit, UsageResponse } from '@/api/types'
+import type { UsageAccount, UsageExtra, UsageLimit, UsageResponse } from '@/api/types'
 import type { CtxLevel } from '@/lib/format'
 
 /** One host's answer: its usage, or why there is none. */
@@ -46,6 +46,36 @@ export function money(n: number | null, currency: string | null): string | null 
   } catch {
     return `${n.toFixed(2)} ${currency ?? ''}`.trim()
   }
+}
+
+/** `Off`, `12.50 USD / 50.00 USD`, `12.50 USD spent` or `On`. */
+export function extraUsageText(x: UsageExtra): string {
+  if (!x.enabled) return 'Off'
+  if (x.limit != null) return `${money(x.used ?? 0, x.currency)} / ${money(x.limit, x.currency)}`
+  if (x.used != null) return `${money(x.used, x.currency)} spent`
+  return 'On'
+}
+
+/**
+ * The limits a compact view shows, in order: the session and weekly all-models limits always,
+ * any other (per-model weekly, …) only once something counts against it.
+ */
+export function compactLimits(limits: UsageLimit[]): UsageLimit[] {
+  const always = (l: UsageLimit) => l.kind === 'session' || l.kind === 'weekly_all'
+  return [...limits.filter(always), ...limits.filter((l) => !always(l) && Math.round(l.percent) > 0)]
+}
+
+/** `Session`, `Weekly`, the model of a per-model limit (`Fable`), else the full label. */
+export function shortLimitLabel(l: Pick<UsageLimit, 'kind' | 'label' | 'model'>): string {
+  if (l.kind === 'session') return 'Session'
+  if (l.kind === 'weekly_all') return 'Weekly'
+  return l.model ?? l.label
+}
+
+/** The account `self` (this UI's server) is logged in to, else the first; the rest after it. */
+export function splitAccounts(accounts: AccountUsage[], self: string | null | undefined): { main: AccountUsage | null; others: AccountUsage[] } {
+  const main = accounts.find((a) => self != null && a.hosts.includes(self)) ?? accounts[0] ?? null
+  return { main, others: accounts.filter((a) => a !== main) }
 }
 
 /**

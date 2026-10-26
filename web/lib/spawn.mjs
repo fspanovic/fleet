@@ -1,13 +1,16 @@
 // Start a fresh agent session — Claude Code, Codex or pi — in a new tmux session (one tmux
 // session = one job, same convention as `fleet tmux new`). Mirrors `fleet spawn` (tmux): open the
-// pane in `dir`, then type `<harness> [--model <id>] [-n <name>] '<prompt>'` into the shell so the
-// user's PATH/profile apply.
+// pane in `dir`, then type `<harness> [--model <id>] -n <name> '<prompt>'` into the shell so the
+// user's PATH/profile apply. A spawn without a name gets a random word (lib/names.mjs) as both its
+// tmux and its Claude session name.
 import { promises as fs } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { MODEL_ID_RE } from './config.mjs';
+import { pickName, registryNames } from './names.mjs';
 
 const NAME_RE = /^[A-Za-z0-9][A-Za-z0-9_-]{0,39}$/;
+const PLAYER_RE = /^\p{L}[\p{L}\p{M} .'’-]{0,31}$/u;
 
 /** POSIX single-quote shell escaping (same as the fleet CLI's `shq`). */
 export function shq(s) {
@@ -36,11 +39,6 @@ export function sanitizeName(raw) {
   return cleaned;
 }
 
-export function defaultName(now = new Date()) {
-  const p = (n) => String(n).padStart(2, '0');
-  return `fw-${p(now.getHours())}${p(now.getMinutes())}${p(now.getSeconds())}`;
-}
-
 /**
  * The longest line we type inline. A fresh pane's shell may still be sourcing its profile,
  * so typed text can land in the tty's canonical-mode buffer, which macOS caps at 1024 bytes
@@ -54,8 +52,8 @@ export const HARNESS_LABELS = { claude: 'Claude', codex: 'Codex', pi: 'pi' };
 
 /** Build the shell line typed into the new pane (`promptFile`: read the prompt from there). */
 export function launchCommand({ launcher = 'claude', harness = 'claude', name, prompt, model, promptFile }) {
-  // No name → plain `claude`: it derives `<cwd>-9d` and the auto-namer (lib/autoname.mjs)
-  // replaces that with a task-shaped name, tmux session included, once the session is idle.
+  // The spawner always names the session (a random word when nobody typed one): `-n` makes it
+  // a chosen name, which the title shows at once and auto-naming leaves alone.
   // Codex has no name flag: its tmux session carries the name, and Codex titles the thread.
   const parts = [launcher];
   if (model) parts.push('--model', shq(model));
@@ -67,9 +65,10 @@ export function launchCommand({ launcher = 'claude', harness = 'claude', name, p
 
 export function validateSpawnRequest(body, { spawnDirs = [] } = {}) {
   const errors = [];
+  // No usable name → null: the spawner picks a free word (lib/names.mjs).
   const nameGiven = Boolean(body?.name && sanitizeName(body.name));
-  const name = nameGiven ? sanitizeName(body.name) : defaultName();
-  if (!NAME_RE.test(name)) errors.push('name must be 1-40 chars of letters, digits, - or _');
+  const name = nameGiven ? sanitizeName(body.name) : null;
+  if (nameGiven && !NAME_RE.test(name)) errors.push('name must be 1-40 chars of letters, digits, - or _');
 
   let dir = typeof body?.dir === 'string' && body.dir.trim() ? body.dir.trim() : spawnDirs[0];
   if (!dir) errors.push('dir is required');
@@ -94,8 +93,17 @@ export function validateSpawnRequest(body, { spawnDirs = [] } = {}) {
     if (!HARNESSES.includes(body.harness)) errors.push(`harness must be one of ${HARNESSES.join(', ')}`);
     else harness = body.harness;
   }
+  // `worktree: true`: start it in a new git worktree of `dir`'s repo (`fleet workspace new`).
+  if (body?.worktree != null && typeof body.worktree !== 'boolean') errors.push('worktree must be a boolean');
+  const worktree = body?.worktree === true;
+  // `player`: a Madrid-palette spawn, named `<player> <n>` (lib/squad.mjs) unless a name was typed.
+  let player = null;
+  if (body?.player != null && body.player !== '') {
+    if (typeof body.player !== 'string' || !PLAYER_RE.test(body.player.trim())) errors.push("player must be 1-32 letters, spaces, . ' or -");
+    else player = body.player.trim();
+  }
   if (errors.length) return { ok: false, error: errors.join('; ') };
-  return { ok: true, name, dir, prompt, nameGiven, model, harness };
+  return { ok: true, name, dir, prompt, nameGiven, model, harness, worktree, player };
 }
 
 /** True when `child` is `root` or lies beneath it (both already resolved). */
@@ -160,8 +168,25 @@ export function createSpawner({
   enterDelayMs = 400,
   sleep,
   promptDir = path.join(os.homedir(), '.claude', 'fleet-prompts'),
+  claudeHome = path.join(os.homedir(), '.claude'),
+  random = Math.random,
 }) {
   const wait = sleep ?? ((ms) => new Promise((r) => setTimeout(r, ms)));
+
+  async function tmuxSessionNames() {
+    try {
+      const { stdout } = await run(tmux, ['list-sessions', '-F', '#{session_name}'], { timeout: 5000 });
+      return String(stdout ?? '').split('\n').filter(Boolean);
+    } catch {
+      return []; // no tmux server yet
+    }
+  }
+
+  /** A word no tmux session and no Claude session on this host is called yet. */
+  async function freshName() {
+    const [tmuxNames, claudeNames] = await Promise.all([tmuxSessionNames(), registryNames(claudeHome)]);
+    return pickName([...tmuxNames, ...claudeNames], random);
+  }
 
   async function tmuxHasSession(name) {
     try {
@@ -172,8 +197,12 @@ export function createSpawner({
     }
   }
 
-  /** @returns {{ name, dir, tmuxSession, command, trusted, model, harness }} */
-  async function spawn({ name, dir, prompt, nameGiven = true, model = '', harness = 'claude' }) {
+  /**
+   * `nameGiven: false` (or no `name`): pick a free word, used as the tmux and the Claude name.
+   * `title`: the Claude name when it is not the tmux `name` (`Kovačić 27` / `kovacic-27`).
+   * @returns {{ name, dir, tmuxSession, command, trusted, model, harness }}
+   */
+  async function spawn({ name, dir, prompt, nameGiven = true, model = '', harness = 'claude', title = null }) {
     let st;
     try {
       st = await fs.stat(dir);
@@ -181,11 +210,12 @@ export function createSpawner({
       throw Object.assign(new Error(`dir does not exist: ${dir}`), { status: 400 });
     }
     if (!st.isDirectory()) throw Object.assign(new Error(`not a directory: ${dir}`), { status: 400 });
+    if (!nameGiven || !name) name = await freshName();
     if (await tmuxHasSession(name)) {
       throw Object.assign(new Error(`tmux session "${name}" already exists`), { status: 409 });
     }
     await run(tmux, ['new-session', '-d', '-s', name, '-c', dir], { timeout: 8000 });
-    const launch = { launcher: launchers[harness] || (harness === 'claude' ? launcher : harness), harness, name: nameGiven ? name : null, prompt, model };
+    const launch = { launcher: launchers[harness] || (harness === 'claude' ? launcher : harness), harness, name: title || name, prompt, model };
     let command = launchCommand(launch);
     if (Buffer.byteLength(command) > TYPED_LINE_MAX) {
       const d = new Date();
@@ -203,7 +233,7 @@ export function createSpawner({
     await run(tmux, ['send-keys', '-t', `${name}:`, 'Enter'], { timeout: 8000 });
     const trusted = await acceptTrustPrompt(name, { harness });
     if (!trusted) await ensureStarted(name, { harness });
-    return { name, dir, tmuxSession: name, command, trusted, model: model || null, harness };
+    return { name: title || name, dir, tmuxSession: name, command, trusted, model: model || null, harness };
   }
 
   /**
@@ -284,5 +314,5 @@ export function createSpawner({
     throw Object.assign(new Error(`${who} did not start${tail ? `:\n${tail}` : ''}`), { status: 502 });
   }
 
-  return { spawn, tmuxHasSession, acceptTrustPrompt, ensureStarted };
+  return { spawn, freshName, tmuxHasSession, acceptTrustPrompt, ensureStarted };
 }

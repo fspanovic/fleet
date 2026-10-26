@@ -23,10 +23,21 @@ function fakeHost(self, sessions) {
     peek: async (s, lines) => (calls.push(['peek', s.session_id, lines]), `screen of ${s.name}`),
     send: async (s, text) => void calls.push(['send', s.session_id, text]),
     keys: async (s, key) => void calls.push(['keys', s.session_id, key]),
+    type: async (s, text) => void calls.push(['type', s.session_id, text]),
   };
   const transcripts = { messages: async () => ({ messages: [{ role: 'user', text: 'hi' }], total: 1, truncated: false, updatedAt: 1 }) };
-  const spawner = { spawn: async (req) => (calls.push(['spawn', req]), { name: req.name, dir: req.dir, tmuxSession: req.name, command: 'claude', trusted: false }) };
+  // Unnamed: the real spawner picks a free word.
+  const spawner = { spawn: async (req) => (calls.push(['spawn', req]), { name: req.name ?? 'kelpie', dir: req.dir, tmuxSession: req.name ?? 'kelpie', command: 'claude', trusted: false }) };
   const killer = { kill: async (s) => (calls.push(['kill', s.session_id]), { process: 'terminated', terminal: 'tmux-session-killed' }) };
+  const plan = (s) => ({ cwd: `/w/wt-${s.name}`, action: 'remove-worktree', reason: null, worktree: { path: `/w/wt-${s.name}`, branch: s.name }, sessions: [], blocked: false, needsForce: s.status === 'waiting' });
+  const deleter = {
+    inspect: async (s, all) => (calls.push(['inspect', s.session_id, all.length]), plan(s)),
+    remove: async (s, all, { force }) => {
+      calls.push(['delete', s.session_id, force]);
+      if (plan(s).needsForce && !force) return { refused: 'changes', plan: plan(s) };
+      return { plan: plan(s), process: 'terminated', terminal: 'tmux-session-killed', worktree: { path: `/w/wt-${s.name}`, branch: s.name, removed: true, forced: force, pruned: false, error: null } };
+    },
+  };
   const autoNamer = {
     lastRun: null,
     runOnce: async (reason) => {
@@ -69,7 +80,7 @@ function fakeHost(self, sessions) {
     calls.push(['prSeen', ref]);
     return { pr: ref, seenAt: 1000, applied: true };
   };
-  return { calls, cli, backend, transcripts, spawner, killer, autoNamer, fleet: createFleet({ cli, self }) };
+  return { calls, cli, backend, transcripts, spawner, killer, deleter, autoNamer, fleet: createFleet({ cli, self }) };
 }
 
 async function startPair(t) {
@@ -165,6 +176,10 @@ test('peek/send/keys are served locally or proxied exactly once', async (t) => {
   assert.deepEqual(lap.calls.at(-1), ['send', 'aaaaaaaa-0000-0000-0000-000000000001', 'go']);
   assert.equal((await post(`${urls.laptop}/api/hosts/workstation/sessions/bbbbbbbb/keys`, { key: 'Escape' })).status, 200);
   assert.deepEqual(remote.calls.at(-1), ['keys', 'bbbbbbbb-0000-0000-0000-000000000002', 'Escape']);
+  assert.equal((await post(`${urls.laptop}/api/hosts/workstation/sessions/bbbbbbbb/keys`, { key: 'BTab' })).status, 200);
+  assert.deepEqual(remote.calls.at(-1), ['keys', 'bbbbbbbb-0000-0000-0000-000000000002', 'BTab']);
+  assert.equal((await post(`${urls.laptop}/api/hosts/workstation/sessions/bbbbbbbb/type`, { text: 'git' })).status, 200);
+  assert.deepEqual(remote.calls.at(-1), ['type', 'bbbbbbbb-0000-0000-0000-000000000002', 'git']);
 
   const msgs = await get(`${urls.workstation}/api/hosts/laptop/sessions/aaaaaaaa/messages`);
   assert.equal(msgs.status, 200);
@@ -202,6 +217,8 @@ test('errors: unknown host/session/route, bad input, wrong method', async (t) =>
   assert.equal((await get(`${urls.laptop}/api/nope`)).status, 404);
   assert.equal((await post(`${urls.laptop}/api/hosts/laptop/sessions/aaaaaaaa/send`, { text: '' })).status, 400);
   assert.equal((await post(`${urls.laptop}/api/hosts/laptop/sessions/aaaaaaaa/keys`, { key: 'C-c' })).status, 400);
+  assert.equal((await post(`${urls.laptop}/api/hosts/laptop/sessions/aaaaaaaa/type`, { text: 'a\n' })).status, 400);
+  assert.equal((await get(`${urls.laptop}/api/hosts/laptop/sessions/aaaaaaaa/type`)).status, 405);
   assert.equal((await get(`${urls.laptop}/api/hosts/laptop/sessions/aaaaaaaa/send`)).status, 405);
   assert.equal((await post(`${urls.laptop}/api/fleet`, {})).status, 405);
 });
@@ -234,6 +251,38 @@ test('kill is POST-only, served locally or proxied once, and reports what happen
   assert.equal((await post(`${urls.laptop}/api/hosts/laptop/sessions/zzzzzzzzzz/kill`, {})).status, 404);
 });
 
+test('delete: inspect is GET, delete POST; both run on the session\'s host (proxied once); dirty needs force', async (t) => {
+  const { urls, lap, remote } = await startPair(t);
+  const inspected = await get(`${urls.laptop}/api/hosts/laptop/sessions/aaaaaaaa/worktree`);
+  assert.equal(inspected.status, 200);
+  assert.equal(inspected.body.id, 'aaaaaaaa-0000-0000-0000-000000000001');
+  assert.equal(inspected.body.action, 'remove-worktree');
+  assert.deepEqual(lap.calls.at(-1), ['inspect', 'aaaaaaaa-0000-0000-0000-000000000001', 1]);
+  assert.equal((await post(`${urls.laptop}/api/hosts/laptop/sessions/aaaaaaaa/worktree`, {})).status, 405);
+  assert.equal((await get(`${urls.laptop}/api/hosts/laptop/sessions/aaaaaaaa/delete`)).status, 405);
+  assert.equal((await post(`${urls.laptop}/api/hosts/laptop/sessions/aaaaaaaa/delete`, { force: 'yes' })).status, 400);
+
+  const done = await post(`${urls.laptop}/api/hosts/laptop/sessions/aaaaaaaa/delete`, {});
+  assert.equal(done.status, 200);
+  assert.equal(done.body.ok, true);
+  assert.equal(done.body.terminal, 'tmux-session-killed');
+  assert.deepEqual(done.body.worktree, { path: '/w/wt-one', branch: 'one', removed: true, forced: false, pruned: false, error: null });
+  assert.deepEqual(lap.calls.at(-1), ['delete', 'aaaaaaaa-0000-0000-0000-000000000001', false]);
+
+  // On the workstation, through the laptop: refused without force (409 + the plan), then forced.
+  const refused = await post(`${urls.laptop}/api/hosts/workstation/sessions/bbbbbbbb/delete`, {});
+  assert.equal(refused.status, 409);
+  assert.equal(refused.body.refused, 'changes');
+  assert.equal(refused.body.host, 'workstation');
+  assert.equal(refused.body.needsForce, true);
+  assert.match(refused.body.error, /nothing closed/);
+  const forced = await post(`${urls.laptop}/api/hosts/workstation/sessions/bbbbbbbb/delete`, { force: true });
+  assert.equal(forced.status, 200);
+  assert.equal(forced.body.worktree.forced, true);
+  assert.deepEqual(remote.calls.at(-1), ['delete', 'bbbbbbbb-0000-0000-0000-000000000002', true]);
+  assert.equal((await get(`${urls.laptop}/api/hosts/laptop/sessions/zzzzzzzzzz/worktree`)).status, 404);
+});
+
 test('autoname runs on the target host and shows up in /api/health', async (t) => {
   const { urls, remote } = await startPair(t);
   assert.equal((await get(`${urls.laptop}/api/hosts/workstation/autoname`)).status, 405);
@@ -247,12 +296,14 @@ test('autoname runs on the target host and shows up in /api/health', async (t) =
   assert.equal((await post(`${urls.laptop}/api/hosts/nope/autoname`, {})).status, 404);
 });
 
-test('spawn without a name lets the auto-namer name it (only when auto-naming is on)', async (t) => {
+test('spawn without a name leaves the name to the spawner (a free word)', async (t) => {
   const { urls, remote } = await startPair(t);
   await post(`${urls.laptop}/api/hosts/workstation/spawn`, {});
   assert.equal(remote.calls.at(-1)[1].nameGiven, false);
+  assert.equal(remote.calls.at(-1)[1].name, null);
   await post(`${urls.laptop}/api/hosts/workstation/spawn`, { name: 'job' });
   assert.equal(remote.calls.at(-1)[1].nameGiven, true);
+  assert.equal(remote.calls.at(-1)[1].name, 'job');
 });
 
 test('spawn passes a valid model through and rejects a bad one (400, nothing spawned)', async (t) => {
@@ -267,41 +318,14 @@ test('spawn passes a valid model through and rejects a bad one (400, nothing spa
   assert.equal(remote.calls.length, before);
 });
 
-function spawnReq(body) {
-  return import('node:stream').then(({ PassThrough }) => {
-    const req = Object.assign(new PassThrough(), { method: 'POST', headers: {} });
-    req.end(JSON.stringify(body));
-    return req;
-  });
-}
-
-test('an unnamed spawn with a first prompt schedules a targeted naming pass (auto-naming on only)', async () => {
-  const scheduled = [];
-  const spawnNamer = { schedule: async (tmux) => void scheduled.push(tmux) };
-  const mk = (enabled) => {
-    const host = fakeHost('solo', []);
-    const config = normalizeConfig({ self: 'solo', web: { autoName: { enabled } }, spawnDirs: [{ path: os.tmpdir() }] }, { env: {}, home: '/home/tester' });
-    return createApi({ config, ...host, spawnNamer, warmFleet: false });
-  };
-  const url = new URL('http://x/api/hosts/solo/spawn');
-  const on = mk(true);
-  const res = await on(await spawnReq({ prompt: 'reply ok' }), url);
-  assert.deepEqual(scheduled, [res.body.tmuxSession]);
-  await on(await spawnReq({}), url); // no first prompt: nothing to name from yet
-  await on(await spawnReq({ name: 'job', prompt: 'x' }), url); // named by hand
-  assert.equal(scheduled.length, 1);
-  await mk(false)(await spawnReq({ prompt: 'reply ok' }), url);
-  assert.equal(scheduled.length, 1, 'auto-naming off: fw-hhmmss fallback, no pass');
-});
-
-test('spawn keeps `claude -n <name>` when auto-naming is off', async () => {
+test('spawn without a name passes nameGiven: false to the spawner even when auto-naming is off', async () => {
   const host = fakeHost('solo', []);
   const config = normalizeConfig({ self: 'solo', web: { autoName: { enabled: false } }, spawnDirs: [{ path: os.tmpdir() }] }, { env: {}, home: '/home/tester' });
   const api = createApi({ config, ...host, warmFleet: false });
   const req = Object.assign(new (await import('node:stream')).PassThrough(), { method: 'POST', headers: {} });
   req.end('{}');
   await api(req, new URL('http://x/api/hosts/solo/spawn'));
-  assert.equal(host.calls.at(-1)[1].nameGiven, true);
+  assert.equal(host.calls.at(-1)[1].nameGiven, false);
 });
 
 test('/api/fleet is served from the warm snapshot with snapshotAt', async (t) => {
@@ -579,4 +603,213 @@ test('answer types the keys for the pending question, only when it is safe to', 
   );
   answered = { answers: ['later'] };
   assert.equal(await call({ toolUseId: 'tq1', answers: [{ options: [0] }] }), 409, 'already answered');
+});
+
+test('send holds a message while one of Claude\'s dialogs is open (409, nothing typed) unless forced', async (t) => {
+  const id = 'dddddddd-0000-0000-0000-000000000004';
+  const permId = 'eeeeeeee-0000-0000-0000-000000000005';
+  const sessions = [
+    { session_id: id, name: 'menu', status: 'waiting', waiting_for: 'dialog open', backend: 'tmux', handle: '%4', updated_at: 4 },
+    { session_id: permId, name: 'perm', status: 'waiting', waiting_for: 'permission prompt', backend: 'tmux', handle: '%5', updated_at: 5 },
+  ];
+  const host = fakeHost('solo', sessions);
+  const config = normalizeConfig({ self: 'solo' }, { env: {}, home: '/home/tester' });
+  const api = createApi({ config, ...host, warmFleet: false, sleep: async () => {} });
+  const server = createHttpServer({ handleApi: api, uiDir: os.tmpdir() });
+  const base = await listen(server);
+  t.after(() => server.close());
+  const sends = () => host.calls.filter((c) => c[0] === 'send');
+
+  const held = await post(`${base}/api/hosts/solo/sessions/${id}/send`, { text: 'hello' });
+  assert.equal(held.status, 409);
+  assert.equal(held.body.held, 'dialog');
+  assert.equal(held.body.waitingFor, 'dialog open');
+  assert.match(held.body.error, /dialog open/);
+  assert.equal(sends().length, 0, 'nothing typed');
+
+  // Keys and typed text still reach the dialog: that is how it is operated.
+  assert.equal((await post(`${base}/api/hosts/solo/sessions/${id}/keys`, { key: 'Escape' })).status, 200);
+  assert.equal((await post(`${base}/api/hosts/solo/sessions/${id}/type`, { text: 'fig' })).status, 200);
+  assert.deepEqual(host.calls.slice(-2).map((c) => [c[0], c[2]]), [['keys', 'Escape'], ['type', 'fig']]);
+
+  assert.equal((await post(`${base}/api/hosts/solo/sessions/${id}/send`, { text: 'hello', force: 'yes' })).status, 400);
+  assert.equal((await post(`${base}/api/hosts/solo/sessions/${id}/send`, { text: 'hello', force: true })).status, 200);
+  assert.deepEqual(sends().at(-1), ['send', id, 'hello']);
+
+  // A permission prompt is not a dialog: quick replies ("1", "Yes") answer it as before.
+  assert.equal((await post(`${base}/api/hosts/solo/sessions/${permId}/send`, { text: '1' })).status, 200);
+
+  // The dialog closed a moment ago (discovery still caches it): a fresh look lets the message through.
+  sessions[0] = { ...sessions[0], status: 'idle', waiting_for: null };
+  assert.equal((await post(`${base}/api/hosts/solo/sessions/${id}/send`, { text: 'after' })).status, 200);
+  assert.deepEqual(sends().at(-1), ['send', id, 'after']);
+});
+
+test('send-now presses the chord only while the transcript has a queued prompt, Claude only, no dialog', async (t) => {
+  const id = 'ffffffff-0000-0000-0000-000000000006';
+  const codexId = 'ffffffff-1111-0000-0000-000000000007';
+  const sessions = [
+    { session_id: id, name: 'busy', status: 'busy', backend: 'tmux', handle: '%6', updated_at: 6 },
+    { session_id: codexId, name: 'cx', status: 'busy', harness: 'codex', backend: 'tmux', handle: '%7', updated_at: 7 },
+  ];
+  const host = fakeHost('solo', sessions);
+  let messages = [{ role: 'user', kind: 'user', text: 'first' }, { role: 'user', kind: 'user', text: 'one', queued: true }, { role: 'user', kind: 'user', text: 'two', queued: true }];
+  host.transcripts = { messages: async () => ({ messages, total: messages.length, truncated: false, updatedAt: 1 }) };
+  host.backend.sendNow = async (s) => void host.calls.push(['sendNow', s.session_id]);
+  const config = normalizeConfig({ self: 'solo' }, { env: {}, home: '/home/tester' });
+  const api = createApi({ config, ...host, warmFleet: false, sleep: async () => {} });
+  const server = createHttpServer({ handleApi: api, uiDir: os.tmpdir() });
+  const base = await listen(server);
+  t.after(() => server.close());
+  const presses = () => host.calls.filter((c) => c[0] === 'sendNow');
+
+  assert.equal((await fetch(`${base}/api/hosts/solo/sessions/${id}/send-now`)).status, 405);
+  const ok = await post(`${base}/api/hosts/solo/sessions/${id}/send-now`, {});
+  assert.equal(ok.status, 200);
+  assert.deepEqual(ok.body, { ok: true, queued: 2 });
+  assert.deepEqual(presses(), [['sendNow', id]]);
+
+  // Claude already took it: the chord would submit the input box instead — nothing pressed.
+  messages = [{ role: 'user', kind: 'user', text: 'one' }];
+  const late = await post(`${base}/api/hosts/solo/sessions/${id}/send-now`, {});
+  assert.equal(late.status, 409);
+  assert.equal(late.body.queued, 0);
+  assert.match(late.body.error, /nothing is queued/);
+
+  messages = [{ role: 'user', kind: 'user', text: 'one', queued: true }];
+  assert.equal((await post(`${base}/api/hosts/solo/sessions/${codexId}/send-now`, {})).status, 409, 'not Claude Code');
+
+  sessions[0] = { ...sessions[0], status: 'waiting', waiting_for: 'dialog open' };
+  await host.fleet.localHost({ force: true });
+  const held = await post(`${base}/api/hosts/solo/sessions/${id}/send-now`, {});
+  assert.equal(held.status, 409);
+  assert.equal(held.body.held, 'dialog');
+  assert.equal(presses().length, 1, 'only the first call pressed it');
+});
+
+test('send-now is proxied to a peer once', async (t) => {
+  const { urls, remote } = await startPair(t);
+  remote.backend.sendNow = async (s) => void remote.calls.push(['sendNow', s.session_id]);
+  remote.transcripts.messages = async () => ({ messages: [{ role: 'user', kind: 'user', text: 'later', queued: true }], total: 1, truncated: false, updatedAt: 1 });
+  const res = await post(`${urls.laptop}/api/hosts/workstation/sessions/bbbbbbbb/send-now`, {});
+  assert.equal(res.status, 200);
+  assert.deepEqual(remote.calls.at(-1), ['sendNow', 'bbbbbbbb-0000-0000-0000-000000000002']);
+});
+
+test('keys with until: Shift+Tab until the status line shows the mode, held while waiting, ambiguous ids never guessed', async (t) => {
+  const ids = {
+    live: 'f1f1f1f1-0000-0000-0000-000000000001',
+    waiting: 'f2f2f2f2-0000-0000-0000-000000000002',
+    codex: 'f3f3f3f3-0000-0000-0000-000000000003',
+    twinA: 'abababab-0000-0000-0000-00000000000a',
+    twinB: 'abababab-0000-0000-0000-00000000000b',
+  };
+  const host = fakeHost('solo', [
+    { session_id: ids.live, name: 'live', status: 'busy', backend: 'tmux', handle: '%1', updated_at: 1 },
+    { session_id: ids.waiting, name: 'ask', status: 'waiting', waiting_for: 'permission prompt', backend: 'tmux', handle: '%2', updated_at: 2 },
+    { session_id: ids.codex, name: 'cx', status: 'idle', harness: 'codex', backend: 'tmux', handle: '%3', updated_at: 3 },
+    { session_id: ids.twinA, name: 'a', status: 'idle', backend: 'tmux', handle: '%4', updated_at: 4 },
+    { session_id: ids.twinB, name: 'b', status: 'idle', backend: 'tmux', handle: '%5', updated_at: 5 },
+  ]);
+  let cycle = ['bypass permissions', 'auto mode', 'manual mode', 'accept edits', 'plan mode'];
+  let at = 0;
+  host.backend.peek = async () => `❯ \n─────\n  ⏵⏵ ${cycle[at]} on (shift+tab to cycle)\n`;
+  host.backend.keys = async (s, key) => {
+    host.calls.push(['keys', s.session_id, key]);
+    if (key === 'BTab') at = (at + 1) % cycle.length;
+  };
+  const config = normalizeConfig({ self: 'solo' }, { env: {}, home: '/home/tester' });
+  const api = createApi({ config, ...host, warmFleet: false, sleep: async () => {} });
+  const server = createHttpServer({ handleApi: api, uiDir: os.tmpdir() });
+  const base = await listen(server);
+  t.after(() => server.close());
+  const keys = (id, body) => post(`${base}/api/hosts/solo/sessions/${id}/keys`, body);
+  const presses = () => host.calls.filter((c) => c[0] === 'keys').length;
+
+  const toAuto = await keys(ids.live, { key: 'BTab', until: 'auto' });
+  assert.equal(toAuto.status, 200);
+  assert.equal(toAuto.body.mode.id, 'auto');
+  assert.equal(toAuto.body.presses, 1);
+  assert.equal(toAuto.body.already, false);
+  const back = await keys(ids.live, { key: 'BTab', until: 'bypass' });
+  assert.equal(back.status, 200);
+  assert.deepEqual(back.body.cycle, ['auto', 'manual', 'acceptEdits', 'plan', 'bypass']);
+  const again = await keys(ids.live, { key: 'BTab', until: 'bypass' });
+  assert.equal(again.body.already, true);
+  assert.equal(again.body.presses, 0);
+
+  // The mode is on every peek of a Claude session.
+  assert.deepEqual((await get(`${base}/api/hosts/solo/sessions/${ids.live}/peek`)).body.mode, { id: 'bypass', label: 'bypass permissions' });
+  assert.equal((await get(`${base}/api/hosts/solo/sessions/${ids.codex}/peek`)).body.mode, null);
+
+  const before = presses();
+  const held = await keys(ids.waiting, { key: 'BTab', until: 'bypass' });
+  assert.equal(held.status, 409);
+  assert.equal(held.body.held, 'waiting');
+  assert.equal((await keys(ids.codex, { key: 'BTab', until: 'auto' })).status, 409);
+  const ambiguous = await keys('abababab', { key: 'BTab', until: 'auto' });
+  assert.equal(ambiguous.status, 409);
+  assert.deepEqual(ambiguous.body.candidates.map((c) => c.id).sort(), [ids.twinA, ids.twinB]);
+  assert.equal((await keys(ids.live, { key: 'Enter', until: 'auto' })).status, 400);
+  assert.equal((await keys(ids.live, { key: 'BTab', until: 'plan' })).status, 400);
+  assert.equal(presses(), before, 'nothing pressed on a refusal');
+
+  // Started without either skip-permissions flag: no bypass in the cycle → 409, offered a restart.
+  cycle = ['manual mode', 'accept edits', 'plan mode', 'auto mode'];
+  at = 0;
+  const missing = await keys(ids.live, { key: 'BTab', until: 'bypass' });
+  assert.equal(missing.status, 409);
+  assert.equal(missing.body.unavailable, 'bypass');
+  assert.equal(missing.body.restart, true);
+  assert.equal(at, 0, 'back in the mode it started in');
+});
+
+test('kill with restart: resumes the same conversation in the same pane with --dangerously-skip-permissions, never while busy or waiting', async (t) => {
+  const id = 'f9f9f9f9-0000-0000-0000-000000000009';
+  const row = { session_id: id, name: 'kelpie', name_source: 'user', status: 'idle', pid: 4242, cwd: '/w/app', backend: 'tmux', handle: '%9', updated_at: 9 };
+  const sessions = [row];
+  const host = fakeHost('solo', sessions);
+  let screen = '  ⏸ manual mode on\n';
+  let reads = 0;
+  host.backend.peek = async () => ((reads += 1), screen);
+  host.killer.processArgs = async () => 'claude --model opus -n kelpie';
+  host.killer.restart = async (s, line) => {
+    host.calls.push(['restart', s.session_id, line]);
+    // The dead TUI's mode line stays above the typed resume line until the new one draws.
+    const stale = `  ⏸ manual mode on\nprobe % ${line}\n`;
+    const from = reads;
+    host.backend.peek = async () => ((reads += 1), reads - from > 2 ? `${stale}  ⏵⏵ bypass permissions on (shift+tab to cycle)\n` : stale);
+    return { process: 'terminated', terminal: 'left', pane: s.handle };
+  };
+  const config = normalizeConfig({ self: 'solo', claude: 'claude' }, { env: {}, home: '/home/tester' });
+  const api = createApi({ config, ...host, warmFleet: false, sleep: async () => {} });
+  const server = createHttpServer({ handleApi: api, uiDir: os.tmpdir() });
+  const base = await listen(server);
+  t.after(() => server.close());
+  const restart = (body) => post(`${base}/api/hosts/solo/sessions/${id}/kill`, body);
+
+  assert.equal((await restart({ restart: 'auto' })).status, 400);
+  row.status = 'busy';
+  const busy = await restart({ restart: 'bypass' });
+  assert.equal(busy.status, 409);
+  assert.equal(busy.body.held, 'busy');
+  row.status = 'waiting';
+  assert.equal((await restart({ restart: 'bypass' })).body.held, 'waiting');
+  row.status = 'shell';
+  assert.equal((await restart({ restart: 'bypass' })).body.held, 'background');
+  assert.equal(host.calls.filter((c) => c[0] === 'restart' || c[0] === 'kill').length, 0, 'nothing ended');
+
+  row.status = 'idle';
+  const done = await restart({ restart: 'bypass' });
+  assert.equal(done.status, 200);
+  assert.equal(done.body.mode.id, 'bypass');
+  assert.equal(done.body.terminal, 'left');
+  assert.equal(done.body.restarted.command, "cd '/w/app' && claude --model 'opus' --resume 'f9f9f9f9-0000-0000-0000-000000000009' --dangerously-skip-permissions -n 'kelpie'");
+  assert.deepEqual(host.calls.filter((c) => c[0] === 'kill'), [], 'never the closing kill');
+
+  // Already in bypass: a no-op that says so.
+  const noop = await restart({ restart: 'bypass' });
+  assert.equal(noop.status, 200);
+  assert.equal(noop.body.already, true);
+  assert.equal(host.calls.filter((c) => c[0] === 'restart').length, 1);
 });

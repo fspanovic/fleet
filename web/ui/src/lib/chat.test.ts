@@ -2,7 +2,7 @@ import { expect, test } from 'vitest'
 
 import type { Message } from '@/api/types'
 
-import { CHAT_FONT_SIZES, nearBottom, nextChatLimit, parseMode, parseSize, sameGroup, splitPasted, stepSize, visibleMessages } from './chat'
+import { CHAT_FONT_SIZES, nearBottom, nextChatLimit, parseMode, parseSize, queuedPrompts, sameGroup, sendNowLabel, splitPasted, stepSize, visibleMessages } from './chat'
 
 const m = (over: Partial<Message>): Message => ({ role: 'assistant', kind: 'assistant', text: 'x', ts: 1_000_000, ...over })
 
@@ -61,4 +61,14 @@ test('splitPasted pulls <pasted_content> blocks out of a prompt', () => {
     { pasted: false, text: 'thoughts?' },
   ])
   expect(splitPasted('<pasted_content id="x">only</pasted_content>')).toEqual([{ pasted: true, text: 'only' }])
+})
+
+test('queuedPrompts counts the prompts still in Claude\'s queue and picks the last one', () => {
+  const queued = (text: string): Message => ({ role: 'user', kind: 'user', text, queued: true })
+  const list: Message[] = [{ role: 'user', kind: 'user', text: 'go' }, { role: 'assistant', kind: 'assistant', text: 'ok' }, queued('one'), queued('two')]
+  expect(queuedPrompts(list)).toEqual({ count: 2, last: list[3] })
+  expect(queuedPrompts(list.slice(0, 2))).toEqual({ count: 0, last: null })
+  expect(queuedPrompts(null)).toEqual({ count: 0, last: null })
+  expect(sendNowLabel(1)).toBe('Send now')
+  expect(sendNowLabel(3)).toBe('Send all 3 now')
 })

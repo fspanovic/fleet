@@ -22,7 +22,49 @@
         var t = localStorage.getItem('fleet.theme')
         var light = t === 'light' || (t !== 'dark' && matchMedia('(prefers-color-scheme: light)').matches)
         var p = localStorage.getItem('fleet.palette')
-        var colors = { default: ['#0b0c0e', '#ffffff'], earth: ['#1a1512', '#f7f2ea'], dusk: ['#121119', '#faf9fc'] }
+        var colors = {
+          default: ['#0b0c0e', '#ffffff'],
+          earth: ['#1a1512', '#f7f2ea'],
+          dusk: ['#121119', '#faf9fc'],
+          forest: ['#0f1511', '#f4f7f1'],
+          ocean: ['#0a1620', '#f3f8fa'],
+          sand: ['#1a1813', '#faf6ec'],
+          rose: ['#1a1215', '#fdf7f8'],
+          mono: ['#0f0f0f', '#fafafa'],
+          'high-contrast': ['#000000', '#ffffff'],
+          madrid: ['#110d1d', '#ffffff'],
+          ayu: ['#1f2430', '#fcfcfc'],
+          catppuccin: ['#1e1e2e', '#eff1f5'],
+          cobalt2: ['#193549', '#f2f6fa'],
+          dracula: ['#282a36', '#fbf8ef'],
+          everforest: ['#2d353b', '#fdf6e3'],
+          flexoki: ['#100f0f', '#fffcf0'],
+          github: ['#0d1117', '#ffffff'],
+          gruvbox: ['#282828', '#fbf1c7'],
+          horizon: ['#1c1e26', '#fdf0ed'],
+          iceberg: ['#161821', '#e8e9ec'],
+          kanagawa: ['#1f1f28', '#f2ecbc'],
+          material: ['#292d3e', '#fafafa'],
+          monokai: ['#2d2a2e', '#faf4f2'],
+          moonlight: ['#222436', '#f5f6fc'],
+          'night-owl': ['#011627', '#fbfbfb'],
+          nightfox: ['#192330', '#f6f2ee'],
+          nord: ['#2e3440', '#eceff4'],
+          'oceanic-next': ['#1b2b34', '#f5f7fa'],
+          one: ['#282c34', '#fafafa'],
+          oxocarbon: ['#161616', '#ffffff'],
+          papercolor: ['#1c1c1c', '#eeeeee'],
+          poimandres: ['#1b1e28', '#f4f6fb'],
+          'rose-pine': ['#191724', '#faf4ed'],
+          selenized: ['#103c48', '#fbf3db'],
+          solarized: ['#002b36', '#fdf6e3'],
+          sonokai: ['#2c2e34', '#f7f7f8'],
+          synthwave: ['#262335', '#fbf6ff'],
+          'tokyo-night': ['#1a1b26', '#e1e2e7'],
+          tomorrow: ['#1d1f21', '#ffffff'],
+          vesper: ['#101010', '#fafaf9'],
+          zenburn: ['#3f3f3f', '#f5f5ec'],
+        }
         if (!colors.hasOwnProperty(p)) p = 'default'
         if (light) document.documentElement.classList.remove('dark')
         if (p !== 'default') document.documentElement.dataset.palette = p

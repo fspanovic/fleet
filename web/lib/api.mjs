@@ -4,9 +4,22 @@
 import path from 'node:path';
 import { Readable } from 'node:stream';
 import { HttpError, readJsonBody } from './http.mjs';
-import { clampLines, findSession, resolveHost, sleep as defaultSleep, validateKey, validateSendText, validateTitle } from './util.mjs';
+import {
+  DIALOG_OPEN,
+  clampLines,
+  dialogOpen,
+  findSession,
+  resolveHost,
+  sleep as defaultSleep,
+  validateKey,
+  validateSendText,
+  validateTitle,
+  validateTypeText,
+} from './util.mjs';
 import { answerSteps, screenShowsPrompt, validateAnswer } from './questions.mjs';
+import { claudeMode, cycleToMode, resumeInBypassCommand, validateUntil } from './modes.mjs';
 import { resolveAllowedDir, validateSpawnRequest } from './spawn.mjs';
+import { squadTitle, squadTmuxName } from './squad.mjs';
 import {
   fetchPeerHost as defaultFetchPeerHost,
   proxyToPeer as defaultProxyToPeer,
@@ -16,6 +29,7 @@ import {
 import { createSnapshot } from './snapshot.mjs';
 import { DISABLED_GROUPS } from './grouping.mjs';
 import { DEFAULT_MODELS } from './config.mjs';
+import { stampSessionStyles } from './fleet.mjs';
 import { SESSION_ID_RE } from './briefs.mjs';
 import { editorUrl, editorViewer, withBriefEditor, withSessionEditors } from './editor.mjs';
 import {
@@ -31,11 +45,21 @@ import {
 import { DEFAULT_STACKS_MODEL } from './config.mjs';
 import { validateDormantRequest } from './dormant.mjs';
 import { validJobName } from './jobs.mjs';
+import { quickStartView } from './tasks.mjs';
+import { validateTaskLinkBody } from './task-links.mjs';
+import { SCRATCHPAD_BODY_LIMIT, validateScratchpadAppend, validateScratchpadPut } from './scratchpad.mjs';
 
 export const API_VERSION = 1;
 
-const SESSION_ROUTE = /^\/api\/hosts\/([^/]+)\/sessions\/([^/]+)\/(peek|messages|send|keys|answer|kill|rename)$/;
-const POST_ACTIONS = new Set(['send', 'keys', 'answer', 'kill', 'rename']);
+const SESSION_ROUTE = /^\/api\/hosts\/([^/]+)\/sessions\/([^/]+)\/(peek|messages|send|send-now|keys|type|answer|kill|rename|worktree|delete)$/;
+const POST_ACTIONS = new Set(['send', 'send-now', 'keys', 'type', 'answer', 'kill', 'rename', 'delete']);
+/** `git worktree remove` of a big tree (after the kill's ≤ 4 s grace): give a peer a minute and a half. */
+const DELETE_PROXY_MS = 90 * 1000;
+/**
+ * A kill with `restart` ends the agent (≤ 4 s), waits for the shell, then watches the resumed TUI (≤ 20 s);
+ * keys with `until` press and re-read the pane up to six times (≤ ~15 s).
+ */
+const KILL_PROXY_MS = 60 * 1000;
 
 const GROUP_ID_RE = /^[A-Za-z0-9._:-]{1,120}$/;
 const MEMBER_HOST_RE = /^[^/\s]{1,128}$/;
@@ -45,7 +69,8 @@ const MAX_GROUP_LABEL = 200;
 /**
  * The body of POST /api/groups/edit, validated: `{ op: "rename", id, label }`,
  * `{ op: "move", host, session, to }` / `{ op: "move", host, session, label }` (a new group),
- * `{ op: "create", label }` (an empty group) or `{ op: "delete", id }` (an empty group).
+ * `{ op: "create", label }` (an empty group), `{ op: "delete", id }` (an empty group) or
+ * `{ op: "default", id }` (the default group; `id: null` unsets it).
  */
 export function groupEditOp(body) {
   const b = body && typeof body === 'object' ? body : {};
@@ -67,7 +92,8 @@ export function groupEditOp(body) {
   }
   if (b.op === 'create') return { op: 'create', label: label() };
   if (b.op === 'delete') return { op: 'delete', id: groupId(b.id, 'group id') };
-  throw new HttpError('op must be "rename", "move", "create" or "delete"', 400);
+  if (b.op === 'default') return { op: 'default', id: b.id == null ? null : groupId(b.id, 'group id') };
+  throw new HttpError('op must be "rename", "move", "create", "delete" or "default"', 400);
 }
 const SPAWN_ROUTE = /^\/api\/hosts\/([^/]+)\/spawn$/;
 const AUTONAME_ROUTE = /^\/api\/hosts\/([^/]+)\/autoname$/;
@@ -76,6 +102,8 @@ const FILES_ROUTE = /^\/api\/hosts\/([^/]+)\/sessions\/([^/]+)\/files\/(stat|raw
 const COMPLETE_ROUTE = /^\/api\/hosts\/([^/]+)\/sessions\/([^/]+)\/complete$/;
 const COMPLETE_KINDS = new Set(['skills', 'files', 'brain']);
 const BRIEF_ROUTE = /^\/api\/hosts\/([^/]+)\/sessions\/([^/]+)\/brief(\/regenerate)?$/;
+/** A session's manual task link (lib/task-links.mjs). */
+const TASK_LINK_ROUTE = /^\/api\/hosts\/([^/]+)\/sessions\/([^/]+)\/task$/;
 const NOTES_ROUTE = /^\/api\/hosts\/([^/]+)\/notes\/(tree|search|file|raw)$/;
 const SPAWN_DIRS_ROUTE = /^\/api\/hosts\/([^/]+)\/spawn-dirs$/;
 const STACKS_ROUTE = /^\/api\/hosts\/([^/]+)\/stacks(\/sync)?$/;
@@ -99,6 +127,8 @@ const HARNESSES_ROUTE = /^\/api\/hosts\/([^/]+)\/harnesses$/;
 /** `fleet harness list` runs `pi --list-models` (a node start): keep its answer a while. */
 const HARNESSES_TTL_MS = 10 * 60 * 1000;
 const DORMANT_ROUTE = /^\/api\/hosts\/([^/]+)\/dormant(?:\/(restore|forget))?$/;
+/** Read-only chat of a closed or dormant session, resolved from this host's own records. */
+const DORMANT_MESSAGES_ROUTE = /^\/api\/hosts\/([^/]+)\/dormant\/sessions\/([^/]+)\/messages$/;
 /** A restore types launch lines into new tmux panes; `--all` may bring back many sessions. */
 const DORMANT_PROXY_MS = 6 * 60 * 1000;
 /** Restored sessions register in `fleet list` within seconds: refresh the list and stacks then. */
@@ -117,13 +147,12 @@ export const DEFAULT_QUICK_REPLIES = [
  *   config      normalized config (lib/config.mjs)
  *   fleet       lib/fleet.mjs instance (local discovery)
  *   backend     lib/backends.mjs instance (peek/send/keys)
- *   transcripts lib/transcript.mjs reader
+ *   transcripts lib/transcript.mjs reader (`messages`; `recordMessages` for a closed / dormant chat)
  *   spawner     lib/spawn.mjs spawner
  *   killer      lib/kill.mjs killer (kill action; absent → 501)
+ *   deleter     lib/delete.mjs deleter (worktree inspect + delete actions; absent → 501)
  *   cli         lib/fleet-cli.mjs instance — `rename`, `usage`, `prs`, `prCheckout` (absent → 501)
  *   autoNamer   lib/autoname.mjs instance (autoname route + health; absent → 501)
- *   spawnNamer  lib/autoname.mjs#createSpawnNamer — a targeted naming pass after an unnamed
- *               spawn with a first prompt (only when web.autoName is enabled; absent → none)
  *   uploader    lib/uploads.mjs instance (uploads route; absent → 501)
  *   transcriber lib/transcribe.mjs instance (POST /api/transcribe, settings.transcribe; absent → off)
  *   speaker     lib/transcribe.mjs#createSpeaker (POST /api/speak, settings.speak; absent → off)
@@ -135,8 +164,12 @@ export const DEFAULT_QUICK_REPLIES = [
  *   spawnDirs   lib/spawn-dirs.mjs#createSpawnDirsEditor (GET/PUT spawn-dirs; absent → 501)
  *   repos       lib/repos.mjs#createRepos (GET/PUT repos, POST repos/sync|service; absent → 501)
  *   jobs        lib/jobs.mjs#createJobs (GET jobs[/:name], POST jobs/:name/run|enabled; absent → 501)
+ *   tasks       lib/tasks.mjs#createTasks (GET /api/tasks: My tasks; absent → 501: web.tasks unset)
  *   stacks      lib/stacks.mjs#createStacks (…/stacks routes, sibling spawn, sync after kill; absent → 501)
- *   dormant     lib/dormant.mjs#createDormant (…/dormant routes: list / restore / forget; absent → 501)
+ *   dormant     lib/dormant.mjs#createDormant (…/dormant routes: list / restore / forget / a record's messages; absent → 501)
+ *   taskMentions  lib/mentions.mjs#createTaskMentions (`taskMentions` on this host's sessions; absent → none)
+ *   taskLinks   lib/task-links.mjs#createTaskLinks (`manualTask` on this host's sessions, …/sessions/:id/task; absent → 501)
+ *   squadCounter  lib/squad.mjs#createSquadCounter (a spawn with `player` is named `<player> <n>`; absent → today's naming)
  *   grouper     lib/grouping.mjs instance when THIS host runs grouping (absent → proxy to the
  *               grouping host, or a disabled response)
  *   warmFleet   keep the merged /api/fleet warm in the background (lib/snapshot.mjs)
@@ -152,9 +185,9 @@ export function createApi({
   transcripts,
   spawner,
   killer = null,
+  deleter = null,
   cli = null,
   autoNamer = null,
-  spawnNamer = null,
   uploader = null,
   transcriber = null,
   speaker = null,
@@ -166,8 +199,13 @@ export function createApi({
   spawnDirs = null,
   repos = null,
   jobs = null,
+  tasks = null,
   stacks = null,
   dormant = null,
+  taskMentions = null,
+  taskLinks = null,
+  squadCounter = null,
+  scratchpad = null,
   grouper = null,
   groupingDiscoveryMs = 5 * 60 * 1000,
   name = 'fleet-web',
@@ -186,6 +224,9 @@ export function createApi({
   logError = () => {},
   sleep = defaultSleep,
   answerKeyGapMs = 80,
+  // After a restart in bypass: how long to watch the pane for the resumed TUI's mode line.
+  restartWatchTries = 40,
+  restartWatchMs = 500,
 }) {
   // Each host advertises whether it has a notes explorer (like its spawnDirs).
   const notesInfo = () => (notes ? { notes: { name: notes.name ?? null } } : {});
@@ -193,16 +234,23 @@ export function createApi({
   const stacksInfo = () => (stacks ? { stacks: stacks.compact() } : {});
   // …and marks its voice operator's row (`operator: true`), which the UI keeps out of session lists.
   const stampOperator = (host) => (operator ? operator.stamp(host) : host);
+  // …and on each session the task URLs its transcript mentions, as counted so far (lib/mentions.mjs).
+  // …and the manual task link of each session that has one (lib/task-links.mjs).
+  const stampLinks = (host) => (taskLinks ? taskLinks.stamp(host) : host);
+  // …and on each session the short line of its brief's Summary, as read so far (lib/briefs.mjs; reads only).
+  const stampBriefs = (host) => (briefs?.stamp ? briefs.stamp(host) : host);
+  const stampLocal = (host) => stampBriefs(stampLinks(stampOperator(taskMentions ? taskMentions.stamp(host) : host)));
 
   async function buildFleet({ force = false } = {}) {
-    const selfHost = stampOperator({ ...(await fleet.localHost({ force })), spawnDirs: config.spawnDirs, ...notesInfo(), ...stacksInfo() });
+    const selfHost = stampLocal({ ...(await fleet.localHost({ force })), spawnDirs: config.spawnDirs, ...notesInfo(), ...stacksInfo() });
     const peerNames = Object.keys(config.peers);
     const peerHosts = await Promise.all(
       peerNames.map((n) => fetchPeerHost(n, config.peers[n], { timeoutMs: peerFleetTimeoutMs })),
     );
     // Editor links are added per request (handleFleet): they depend on where the browser is.
     // A member of a stack homed on another host gets that stack on its row here.
-    return { self: config.self, hosts: stampForeign([selfHost, ...peerHosts]) };
+    // …and a matching `web.sessionStyles` rule of this server its `style`, whichever host it runs on.
+    return { self: config.self, hosts: stampSessionStyles(stampForeign([selfHost, ...peerHosts]), config.sessionStyles) };
   }
 
   // The merged fleet, served stale-while-revalidate so a page load never waits on
@@ -234,7 +282,7 @@ export function createApi({
     const withEditors = (body) => ({ ...body, hosts: body.hosts.map((h) => withSessionEditors(h, ec)) });
     if (url.searchParams.get('local') === '1') {
       // Peers poll this: the local host (2s TTL cache), never the merged snapshot.
-      const selfHost = stampOperator({ ...(await fleet.localHost()), spawnDirs: config.spawnDirs, ...notesInfo(), ...stacksInfo() });
+      const selfHost = stampLocal({ ...(await fleet.localHost()), spawnDirs: config.spawnDirs, ...notesInfo(), ...stacksInfo() });
       return { status: 200, body: withEditors({ self: config.self, hosts: [selfHost] }) };
     }
     if (snapshot) return { status: 200, body: withEditors(await snapshot.get()) };
@@ -249,15 +297,32 @@ export function createApi({
     return session;
   }
 
+  /** The session and every live session on this host, from one fresh discovery (a delete must not miss a new one). */
+  async function resolveLocalSessionWithAll(id) {
+    const host = await fleet.localHost({ force: true });
+    if (!host.ok) throw new HttpError(`session discovery failed: ${host.error}`, 503);
+    const session = findSession(host.sessions, id);
+    if (!session) throw new HttpError(`unknown session: ${id}`, 404);
+    return { session, sessions: host.sessions };
+  }
+
   async function localSessionAction({ action, id, url, req }) {
     if (action === 'peek') {
       const lines = clampLines(url.searchParams.get('lines'));
       const session = await resolveLocalSession(id);
       const text = await backend.peek(session, lines);
+      // Claude's permission mode from its status line (null: none on screen, or another harness).
+      const mode = isClaude(session) ? claudeMode(text) : null;
       return {
         status: 200,
-        body: { host: config.self, id: session.session_id, backend: session.backend, lines, text, capturedAt: Date.now() },
+        body: { host: config.self, id: session.session_id, backend: session.backend, lines, text, mode, capturedAt: Date.now() },
       };
+    }
+
+    if (action === 'worktree') {
+      if (!deleter) throw new HttpError('delete is not available on this server', 501);
+      const { session, sessions } = await resolveLocalSessionWithAll(id);
+      return { status: 200, body: { host: config.self, id: session.session_id, name: session.name ?? null, ...(await deleter.inspect(session, sessions)) } };
     }
 
     if (action === 'messages') {
@@ -284,6 +349,7 @@ export function createApi({
     }
 
     const body = await readJsonBody(req);
+    if (action === 'kill' && body.restart !== undefined) return restartInBypass(id, body);
     if (action === 'kill') {
       if (!killer) throw new HttpError('kill is not available on this server', 501);
       const session = await resolveLocalSession(id);
@@ -295,6 +361,25 @@ export function createApi({
         status: 200,
         body: { ok: true, host: config.self, id: session.session_id, name: session.name ?? null, ...result },
       };
+    }
+
+    if (action === 'delete') {
+      if (!deleter) throw new HttpError('delete is not available on this server', 501);
+      if (body.force !== undefined && typeof body.force !== 'boolean') throw new HttpError('force must be a boolean', 400);
+      const { session, sessions } = await resolveLocalSessionWithAll(id);
+      const { refused, plan, ...result } = await deleter.remove(session, sessions, { force: body.force === true });
+      const head = { host: config.self, id: session.session_id, name: session.name ?? null };
+      if (refused) {
+        const error = {
+          sessions: 'other sessions run in this worktree — nothing closed',
+          locked: 'the worktree is locked (git worktree unlock) — nothing closed',
+          changes: 'the worktree has uncommitted changes or unpushed commits — nothing closed (force to delete anyway)',
+        }[refused];
+        return { status: 409, body: { ...head, error, refused, ...plan } };
+      }
+      refreshFleet();
+      stacks?.sync('kill').catch(() => {});
+      return { status: 200, body: { ok: true, ...head, action: plan.action, reason: plan.reason, ...result } };
     }
 
     if (action === 'rename') {
@@ -321,8 +406,37 @@ export function createApi({
     if (action === 'send') {
       const check = validateSendText(body.text);
       if (!check.ok) throw new HttpError(check.error, 400);
-      const session = await resolveLocalSession(id);
+      if (body.force !== undefined && typeof body.force !== 'boolean') throw new HttpError('force must be a boolean', 400);
+      let session = await resolveLocalSession(id);
+      // One of Claude's own dialogs (/mcp, /model…) is open: the text would go into it and the
+      // Enter would pick whatever it highlights. Held unless forced; a fresh look first, so a
+      // dialog closed a moment ago (discovery caches ~2 s) does not hold the message.
+      if (dialogOpen(session) && body.force !== true) {
+        session = (await resolveLocalSessionWithAll(id)).session;
+        if (dialogOpen(session)) {
+          return {
+            status: 409,
+            body: {
+              host: config.self,
+              id: session.session_id,
+              held: 'dialog',
+              waitingFor: DIALOG_OPEN,
+              error: 'Claude has a dialog open — the message would be typed into it. Close it first (Esc), or send with force.',
+            },
+          };
+        }
+      }
       await backend.send(session, check.text);
+      return { status: 200, body: { ok: true } };
+    }
+
+    if (action === 'send-now') return sendNow(id);
+
+    if (action === 'type') {
+      const check = validateTypeText(body.text);
+      if (!check.ok) throw new HttpError(check.error, 400);
+      const session = await resolveLocalSession(id);
+      await backend.type(session, check.text);
       return { status: 200, body: { ok: true } };
     }
 
@@ -331,9 +445,162 @@ export function createApi({
     // keys
     const check = validateKey(body.key);
     if (!check.ok) throw new HttpError(check.error, 400);
+    const until = validateUntil(body);
+    if (!until.ok) throw new HttpError(until.error, 400);
+    if (until.until) return switchMode(id, until.until);
     const session = await resolveLocalSession(id);
     await backend.keys(session, check.key);
     return { status: 200, body: { ok: true } };
+  }
+
+  const isClaude = (s) => (s?.harness ?? 'claude') === 'claude';
+
+  /**
+   * The session for an action that changes a live agent's mode or restarts it: a fresh discovery
+   * (the status decides whether it may run), and an ambiguous id prefix is a 409 with the
+   * candidates instead of a 404 — these never guess.
+   */
+  async function resolveForModeChange(id) {
+    const host = await fleet.localHost({ force: true });
+    if (!host.ok) throw new HttpError(`session discovery failed: ${host.error}`, 503);
+    const session = findSession(host.sessions, id);
+    if (session) return { session };
+    const candidates = id.length >= 8 ? host.sessions.filter((s) => typeof s?.session_id === 'string' && s.session_id.startsWith(id)) : [];
+    if (candidates.length > 1) {
+      return {
+        refused: {
+          status: 409,
+          body: { host: config.self, error: `"${id}" matches ${candidates.length} sessions — use a longer id`, candidates: candidates.map((s) => ({ id: s.session_id, name: s.name ?? null })) },
+        },
+      };
+    }
+    throw new HttpError(`unknown session: ${id}`, 404);
+  }
+
+  /** A session waiting on a permission prompt / question / dialog: the keys would answer it. */
+  function heldWaiting(session) {
+    return {
+      status: 409,
+      body: {
+        host: config.self,
+        id: session.session_id,
+        held: 'waiting',
+        waitingFor: session.waiting_for ?? null,
+        error: 'the session is waiting on you (a prompt or a question) — answer it first; nothing pressed',
+      },
+    };
+  }
+
+  /**
+   * POST …/keys `{ key: "BTab", until }`: press Shift+Tab until Claude's status line shows `until`
+   * (`bypass` | `auto`), reading the pane after every press, at most one full cycle. Already there:
+   * nothing pressed. Not in the cycle (a session started without --dangerously-skip-permissions or
+   * --allow-dangerously-skip-permissions): 409 `unavailable`, and the session is back in the mode
+   * it started in.
+   */
+  async function switchMode(id, target) {
+    const { session, refused } = await resolveForModeChange(id);
+    if (refused) return refused;
+    const head = { host: config.self, id: session.session_id };
+    if (!isClaude(session)) throw new HttpError('only Claude Code sessions have permission modes', 409);
+    if (session.status === 'waiting') return heldWaiting(session);
+    const r = await cycleToMode({
+      target,
+      read: () => backend.peek(session, 40),
+      press: () => backend.keys(session, 'BTab'),
+      sleep,
+    });
+    const report = { ...head, mode: r.mode, from: r.from, presses: r.presses, cycle: r.cycle };
+    if (r.result === 'already') return { status: 200, body: { ok: true, ...report, already: true } };
+    if (r.result === 'switched') return { status: 200, body: { ok: true, ...report, already: false } };
+    if (r.result === 'unreadable') {
+      return { status: 409, body: { ...report, error: 'no permission mode on screen (a dialog may cover it) — nothing pressed' } };
+    }
+    if (r.result === 'stuck') {
+      return { status: 502, body: { ...report, error: `Shift+Tab did not change the mode after ${r.presses} press(es) — check the terminal` } };
+    }
+    return {
+      status: 409,
+      body: {
+        ...report,
+        unavailable: target,
+        restart: target === 'bypass',
+        error: `${target === 'bypass' ? 'bypass permissions' : 'auto mode'} is not in this session's Shift+Tab cycle (${r.cycle.join(' → ')})`,
+      },
+    };
+  }
+
+  /**
+   * POST …/kill `{ restart: "bypass" }`: end the TUI but keep its tmux pane, and resume the same
+   * conversation there with --dangerously-skip-permissions (lib/kill.mjs `restart`). It kills a
+   * live turn, so it is refused while the session is busy, waiting, or has a background task.
+   */
+  async function restartInBypass(id, body) {
+    if (body.restart !== 'bypass') throw new HttpError('restart must be "bypass"', 400);
+    if (typeof killer?.restart !== 'function') throw new HttpError('restart is not available on this server', 501);
+    const { session, refused } = await resolveForModeChange(id);
+    if (refused) return refused;
+    const head = { host: config.self, id: session.session_id, name: session.name ?? null };
+    if (!isClaude(session)) throw new HttpError('only Claude Code sessions can be restarted in bypass', 409);
+    if (!session.session_id || session.session_id.startsWith('pid-')) throw new HttpError('the session has no id to resume yet', 409);
+    if (!session.cwd) throw new HttpError('the session\'s working directory is unknown', 409);
+    if (session.status === 'waiting') return heldWaiting(session);
+    if (session.status !== 'idle') {
+      const why = session.status === 'busy' ? 'is working' : session.status === 'shell' ? 'has a background task running' : `is ${session.status ?? 'in an unknown state'}`;
+      return { status: 409, body: { ...head, held: session.status === 'shell' ? 'background' : 'busy', error: `the session ${why} — a restart would kill it; wait until it is idle` } };
+    }
+    const screen = await backend.peek(session, 40).catch(() => '');
+    if (claudeMode(screen)?.id === 'bypass') {
+      return { status: 200, body: { ok: true, ...head, already: true, mode: claudeMode(screen), restarted: null } };
+    }
+    const args = typeof killer.processArgs === 'function' ? await killer.processArgs(session.pid).catch(() => '') : '';
+    // A name someone chose (or fleet's -n word) is kept; Claude's derived `<cwd>-xx` is not a name.
+    const name = session.name && session.name_source !== 'derived' ? session.name : null;
+    const command = resumeInBypassCommand({ launcher: config.claude, cwd: session.cwd, sessionId: session.session_id, name, args });
+    let result;
+    try {
+      result = await killer.restart(session, command);
+    } catch (err) {
+      throw new HttpError(`restart failed: ${err?.message ?? err}`, err?.status ?? 502);
+    }
+    refreshFleet();
+    // Wait (≤ ~20 s) for the resumed TUI's status line, so the answer can say which mode it is in.
+    // Only what is below the typed resume line counts: the old TUI's mode line is still above it.
+    let mode = null;
+    for (let i = 0; i < restartWatchTries && mode?.id !== 'bypass'; i += 1) {
+      await sleep(restartWatchMs);
+      const text = await backend.peek(session, 80).catch(() => '');
+      const at = text.lastIndexOf(session.session_id);
+      mode = claudeMode(at >= 0 ? text.slice(at + session.session_id.length) : text);
+    }
+    return { status: 200, body: { ok: true, ...head, ...result, already: false, mode, restarted: { command } } };
+  }
+
+  /**
+   * Hand the prompts queued in Claude Code to Claude now (its Ctrl+X Ctrl+S): a running shell
+   * command moves to the background, a streamed answer stops. Only while the transcript still has
+   * a queued prompt — once Claude took it the chord would submit whatever sits in the input box —
+   * and not while one of Claude's dialogs is open. Claude Code sessions only.
+   */
+  async function sendNow(id) {
+    let session = await resolveLocalSession(id);
+    if ((session.harness ?? 'claude') !== 'claude') throw new HttpError('only Claude Code sessions have a send-now', 409);
+    if (dialogOpen(session)) {
+      session = (await resolveLocalSessionWithAll(id)).session;
+      if (dialogOpen(session)) {
+        return {
+          status: 409,
+          body: { host: config.self, id: session.session_id, held: 'dialog', waitingFor: DIALOG_OPEN, error: 'Claude has a dialog open — close it first (Esc).' },
+        };
+      }
+    }
+    const result = await transcripts.messages(session, 500);
+    const queued = result?.messages.filter((m) => m.queued === true).length ?? 0;
+    if (!queued) {
+      return { status: 409, body: { host: config.self, id: session.session_id, queued: 0, error: 'nothing is queued — Claude already has it' } };
+    }
+    await backend.sendNow(session);
+    return { status: 200, body: { ok: true, queued } };
   }
 
   /**
@@ -372,20 +639,57 @@ export function createApi({
     if (!check.ok) throw new HttpError(check.error, 400);
     try {
       check.dir = await resolveAllowedDir(check.dir, roots);
-      // No name typed → let Claude derive one and the auto-namer replace it (when it runs).
-      const nameGiven = check.nameGiven !== false || !config.autoName?.enabled;
-      const result = await spawner.spawn({ ...check, nameGiven });
+      if (check.worktree) return await localWorkspaceSpawn(check);
+      // No name typed → `<player> <n>` for a Madrid spawn, else the spawner picks a free word (lib/names.mjs); either goes in as `-n`.
+      const result = await spawner.spawn(await squadNamed(check));
       refreshFleet();
-      // Name it as soon as it has answered, not at the next periodic pass. Codex titles its
-      // own threads and pi keeps the first prompt; the namer drives Claude's `/rename`.
-      if (!nameGiven && check.prompt.trim() && spawnNamer && check.harness === 'claude') {
-        spawnNamer.schedule(result.tmuxSession).catch(() => {});
-      }
       return { status: 200, body: { ok: true, host: config.self, ...result } };
     } catch (err) {
       if (err?.status) throw new HttpError(err.message, err.status);
       throw err;
     }
+  }
+
+  /**
+   * A spawn with `worktree: true`: `fleet workspace new` makes a worktree of `dir`'s repo
+   * (`<workspaces.root>/<repo>/<handle>`, new branch `<prefix>/<handle>` off the remote's
+   * default branch; a typed name is the handle), then the session starts there named after
+   * the handle. The workspace namer (lib/workspaces.mjs) renames branch and title once it
+   * has answered. → the usual spawn body plus `workspace` (the record).
+   */
+  async function localWorkspaceSpawn(check) {
+    if (typeof cli?.workspaceNew !== 'function') throw new HttpError('worktrees are not available on this server', 501);
+    let workspace;
+    try {
+      workspace = await cli.workspaceNew({ dir: check.dir, handle: check.nameGiven ? check.name : null });
+    } catch (err) {
+      if (err?.missing) throw new HttpError('this host’s fleet CLI has no `workspace` command — update it', 501);
+      if (err?.timedOut) throw new HttpError(String(err.message), 504);
+      throw new HttpError(String(err?.message ?? err), 400);
+    }
+    if (typeof workspace?.path !== 'string' || !path.isAbsolute(workspace.path) || typeof workspace.handle !== 'string') {
+      throw new HttpError('fleet workspace new returned no worktree — update fleet on this host', 502);
+    }
+    // A Madrid name is not the handle, so the workspace namer renames the branch but keeps the title.
+    const named = await squadNamed(check);
+    const result = await spawner.spawn({
+      name: named.title ? named.name : workspace.handle,
+      title: named.title ?? null,
+      nameGiven: true,
+      dir: workspace.path,
+      prompt: check.prompt,
+      model: check.model,
+      harness: check.harness,
+    });
+    refreshFleet();
+    return { status: 200, body: { ok: true, host: config.self, ...result, workspace } };
+  }
+
+  /** A spawn with `player` and no typed name: Claude name `<player> <n>` (the counter's next), tmux name its slug. */
+  async function squadNamed(check) {
+    if (!check.player || check.nameGiven || !squadCounter) return check;
+    const title = squadTitle(check.player, await squadCounter.next());
+    return { ...check, name: squadTmuxName(title), nameGiven: true, title };
   }
 
   // --- /api/groups: served by the grouping host, proxied from everywhere else ----------
@@ -553,6 +857,8 @@ export function createApi({
           speak: { enabled: Boolean(await speaker?.enabled()), voice: speaker?.voice ?? null },
           operator: { enabled: Boolean(operator), hosts: config.operator?.hosts ?? [config.self] },
           notes: notes ? { enabled: true, name: notes.name ?? null } : { enabled: false },
+          // Quick starts only with tasks on: the buttons live on the My tasks screen.
+          tasks: tasks ? { enabled: true, quickStart: quickStartView(config.tasks?.quickStart, config.spawnDirs) } : { enabled: false },
           // `generate`: whether creating a stack calls the model (the CLI's `stacks.enabled`).
           stacks: { enabled: Boolean(stacks), model: config.stacks?.model ?? DEFAULT_STACKS_MODEL, generate: config.stacks?.generate !== false },
         },
@@ -564,6 +870,24 @@ export function createApi({
       if (req.method !== 'POST') throw new HttpError('method not allowed', 405);
       if (!transcriber) throw new HttpError('voice input is not available on this server', 501);
       return { status: 200, body: await transcriber.transcribe(req, url.searchParams.get('hint')) };
+    }
+
+    // My tasks: always this server (its credentials), whichever host a session from one starts on.
+    if (url.pathname === '/api/tasks') {
+      if (req.method !== 'GET') throw new HttpError('method not allowed', 405);
+      if (!tasks) throw new HttpError('tasks are not configured on this server (web.tasks.productive)', 501);
+      return { status: 200, body: await tasks.list({ refresh: url.searchParams.get('refresh') === '1' }) };
+    }
+    // …a task's workflow statuses (GET) and moving it to one (POST: writes to Productive).
+    const taskStatus = /^\/api\/tasks\/([^/]+)\/(statuses|status)$/.exec(url.pathname);
+    if (taskStatus) {
+      const [, id, what] = taskStatus;
+      if (req.method !== (what === 'statuses' ? 'GET' : 'POST')) throw new HttpError('method not allowed', 405);
+      if (!tasks?.statuses || !tasks?.setStatus) throw new HttpError('tasks are not configured on this server (web.tasks.productive)', 501);
+      if (what === 'statuses') return { status: 200, body: await tasks.statuses(id) };
+      const body = await readJsonBody(req);
+      if (!body || typeof body !== 'object' || Array.isArray(body)) throw new HttpError('body must be { statusId }', 400);
+      return { status: 200, body: await tasks.setStatus(id, body.statusId) };
     }
 
     // Spoken replies (the voice operator): always this server, like /api/transcribe.
@@ -609,6 +933,21 @@ export function createApi({
       throw new HttpError(`no operator host answered (${tried.join('; ')})`, 503);
     }
 
+    if (url.pathname === '/api/scratchpad' || url.pathname === '/api/scratchpad/append') {
+      if (!scratchpad) throw new HttpError('the scratchpad is not available on this server', 501);
+      if (url.pathname === '/api/scratchpad/append') {
+        if (req.method !== 'POST') throw new HttpError('method not allowed', 405);
+        const note = validateScratchpadAppend(await readJsonBody(req, SCRATCHPAD_BODY_LIMIT));
+        return { status: 200, body: { ...(await scratchpad.append(note)), appended: note } };
+      }
+      if (req.method === 'GET') return { status: 200, body: await scratchpad.get() };
+      if (req.method !== 'PUT') throw new HttpError('method not allowed', 405);
+      const { text, base } = validateScratchpadPut(await readJsonBody(req, SCRATCHPAD_BODY_LIMIT));
+      const r = await scratchpad.put(text, base);
+      if (!r.ok) return { status: 409, body: { error: 'the scratchpad changed since baseUpdatedAt', ...r.value } };
+      return { status: 200, body: r.value };
+    }
+
     if (url.pathname === '/api/fleet') {
       if (req.method !== 'GET') throw new HttpError('method not allowed', 405);
       return handleFleet(req, url);
@@ -639,6 +978,7 @@ export function createApi({
         req,
         url,
         host: decodeURIComponent(rawHost),
+        timeoutMs: action === 'delete' ? DELETE_PROXY_MS : action === 'kill' || action === 'keys' ? KILL_PROXY_MS : peerProxyTimeoutMs,
         local: () => localSessionAction({ action, id, url, req }),
       });
     }
@@ -646,7 +986,8 @@ export function createApi({
     const s = SPAWN_ROUTE.exec(url.pathname);
     if (s) {
       if (req.method !== 'POST') throw new HttpError('method not allowed', 405);
-      return forHost({ req, url, host: decodeURIComponent(s[1]), local: () => localSpawn(req) });
+      // A worktree spawn fetches first: give a peer as long as a PR checkout.
+      return forHost({ req, url, host: decodeURIComponent(s[1]), timeoutMs: PR_CHECKOUT_PROXY_MS, local: () => localSpawn(req) });
     }
 
     const a = AUTONAME_ROUTE.exec(url.pathname);
@@ -800,6 +1141,16 @@ export function createApi({
       });
     }
 
+    const tl = TASK_LINK_ROUTE.exec(url.pathname);
+    if (tl) {
+      const [, rawHost, rawId] = tl;
+      if (req.method !== 'PUT' && req.method !== 'DELETE') throw new HttpError('method not allowed', 405);
+      const r = await forHost({ req, url, host: decodeURIComponent(rawHost), local: () => localTaskLink(decodeURIComponent(rawId), req) });
+      // The merged view (this server's, also for a peer's session) shows the change on the next poll.
+      if (r.status === 200) await refreshFleet({ wait: true });
+      return r;
+    }
+
     const b = BRIEF_ROUTE.exec(url.pathname);
     if (b) {
       const [, rawHost, rawId, regen] = b;
@@ -860,6 +1211,18 @@ export function createApi({
       return r.status === 200 ? { ...r, body: { ...r.body, stack: withStackEditor(r.body?.stack, host, editorViewer(config, req)) } } : r;
     }
 
+    const dmm = DORMANT_MESSAGES_ROUTE.exec(url.pathname);
+    if (dmm) {
+      if (req.method !== 'GET') throw new HttpError('method not allowed', 405);
+      let id;
+      try {
+        id = decodeURIComponent(dmm[2]);
+      } catch {
+        throw new HttpError('invalid session id', 400);
+      }
+      return forHost({ req, url, host: decodeURIComponent(dmm[1]), local: () => localDormantMessages(id, url) });
+    }
+
     const dm = DORMANT_ROUTE.exec(url.pathname);
     if (dm) {
       const action = dm[2] ?? 'list';
@@ -918,6 +1281,64 @@ export function createApi({
       if (err instanceof HttpError && err.body) return { status: err.status, body: err.body };
       throw err;
     }
+  }
+
+  /**
+   * The chat of a session that is no longer running: `id` (a session id, or a unique prefix of
+   * ≥ 8 chars) must be a Claude session inside one of this host's recently closed or dormant
+   * entries (`fleet --local restore --json`); its cwd and harness come from that record, never
+   * from the request, and the transcript is read only from that harness's own directory
+   * (lib/transcript.mjs#locateRecordTranscript). Same shape as the live `messages` route, plus
+   * `record`.
+   */
+  async function localDormantMessages(id, url) {
+    if (!dormant) throw new HttpError('session recovery is not available on this server', 501);
+    if (!SESSION_ID_RE.test(id)) throw new HttpError('invalid session id', 400);
+    if (typeof transcripts?.recordMessages !== 'function') throw new HttpError('transcripts are not available on this server', 501);
+    const limit = clampLines(url.searchParams.get('limit'), 60, 1, 500);
+    const recordsOf = (pool, views) =>
+      (Array.isArray(views) ? views : []).flatMap((v) =>
+        (Array.isArray(v?.sessions) ? v.sessions : [])
+          .filter((x) => typeof x?.sessionId === 'string' && SESSION_ID_RE.test(x.sessionId))
+          .map((x) => ({ session_id: x.sessionId, pool, view: v, session: x })),
+      );
+    const list = await dormant.list();
+    const found = findSession([...recordsOf('closed', list?.closed), ...recordsOf('dormant', list?.dormant)], id);
+    if (!found) throw new HttpError(`not a recently closed or dormant session: ${id}`, 404);
+    const { pool, view: v, session: x } = found;
+    const harness = typeof x.harness === 'string' && x.harness ? x.harness : 'claude';
+    const result = await transcripts.recordMessages({ sessionId: x.sessionId, cwd: typeof x.cwd === 'string' ? x.cwd : null, harness }, limit);
+    if (!result) throw new HttpError('transcript not found for this session', 404);
+    const str = (val) => (typeof val === 'string' && val ? val : null);
+    return {
+      status: 200,
+      body: {
+        host: config.self,
+        id: x.sessionId,
+        status: pool,
+        backend: null,
+        name: str(x.title) ?? str(x.name) ?? str(v.name),
+        limit,
+        messages: result.messages,
+        total: result.total,
+        truncated: result.truncated,
+        updatedAt: result.updatedAt,
+        capturedAt: Date.now(),
+        record: {
+          pool,
+          kind: str(v.kind),
+          target: str(v.target),
+          name: str(v.name),
+          title: str(x.title),
+          sessionName: str(x.name),
+          cwd: str(x.cwd),
+          harness: result.harness ?? harness,
+          since: str(v.since),
+          closedAt: pool === 'closed' ? str(v.closedAt) ?? str(v.since) : null,
+          tmuxSession: str(v.tmuxSession),
+        },
+      },
+    };
   }
 
   /** After a restore: the list now (tmux sessions), again as the agents register, then a stack sync. */
@@ -1014,16 +1435,15 @@ export function createApi({
 
     const userPrompt = check.prompt.trim();
     const prompt = userPrompt ? `${worktree.contextLine} ${userPrompt}` : worktree.contextLine;
-    const nameGiven = check.nameGiven !== false || !config.autoName?.enabled;
     let result;
     try {
-      result = await spawner.spawn({ name: check.name, dir: worktree.path, prompt, nameGiven, model: check.model, harness: check.harness });
+      const named = await squadNamed(check);
+      result = await spawner.spawn({ name: named.name, title: named.title ?? null, dir: worktree.path, prompt, nameGiven: named.nameGiven, model: check.model, harness: check.harness });
     } catch (err) {
       if (err?.status) throw new HttpError(err.message, err.status);
       throw err;
     }
     refreshFleet();
-    if (!nameGiven && spawnNamer && check.harness === 'claude') spawnNamer.schedule(result.tmuxSession).catch(() => {});
     return { status: 200, body: { host: config.self, worktree, spawn: { ok: true, host: config.self, ...result } } };
   }
 
@@ -1080,6 +1500,32 @@ export function createApi({
     if (action === 'run') return jobs.runNow(name, await readJsonBody(req));
     if (action === 'enabled') return jobs.setEnabled(name, await readJsonBody(req));
     return name == null ? jobs.list() : jobs.show(name);
+  }
+
+  /**
+   * PUT `{ taskId }`: link a live session of this host to a task (`null` = to none, hiding automatic
+   * links); DELETE: forget its manual link (automatic links again) — a gone session's too, by exact id.
+   */
+  async function localTaskLink(id, req) {
+    if (!taskLinks) throw new HttpError('manual task links are not available on this server', 501);
+    if (req.method === 'PUT') {
+      const check = validateTaskLinkBody(await readJsonBody(req));
+      if (!check.ok) throw new HttpError(check.error, 400);
+      const session = await resolveLocalSession(id);
+      const sid = session.session_id;
+      if (!sid || !SESSION_ID_RE.test(sid)) throw new HttpError('this session has no session id yet', 409);
+      await taskLinks.set(sid, check.taskId);
+      return { status: 200, body: { host: config.self, id: sid, manualTask: { id: check.taskId } } };
+    }
+    let sid;
+    try {
+      sid = (await resolveLocalSession(id)).session_id;
+    } catch (err) {
+      if (err?.status !== 404 || !SESSION_ID_RE.test(id) || !taskLinks.get(id)) throw err;
+      sid = id;
+    }
+    if (sid) await taskLinks.clear(sid);
+    return { status: 200, body: { host: config.self, id: sid ?? id, manualTask: null } };
   }
 
   /** A live session, or — for GET/PUT — a gone one whose brief file is still there (exact id). */
@@ -1200,14 +1646,14 @@ export function createApi({
     const line = remote ? stack.remoteContextLine : stack.contextLine;
     const prompt = userPrompt ? `${line} ${userPrompt}` : line;
     if (remote) {
-      // The peer validates `dir` against its own spawn dirs and names / auto-names the session.
+      // The peer validates `dir` against its own spawn dirs and names the session (a word when unnamed).
       const proxied = await proxyToPeer(config.peers[spawnHost], {
         method: 'POST',
         pathname: `/api/hosts/${encodeURIComponent(spawnHost)}/spawn`,
         body: JSON.stringify({
           dir: requested,
           prompt,
-          ...(check.nameGiven ? { name: check.name } : {}),
+          ...(check.nameGiven ? { name: check.name } : check.player ? { player: check.player } : {}),
           ...(check.model ? { model: check.model } : {}),
           harness: check.harness,
         }),
@@ -1224,16 +1670,15 @@ export function createApi({
         body: { host: config.self, stack, created: Boolean(created), generated: Boolean(generated), spawn: { ok: true, ...proxied.body, host: spawnHost } },
       };
     }
-    const nameGiven = check.nameGiven !== false || !config.autoName?.enabled;
     let result;
     try {
-      result = await spawner.spawn({ name: check.name, dir, prompt, nameGiven, model: check.model, harness: check.harness });
+      const named = await squadNamed(check);
+      result = await spawner.spawn({ name: named.name, title: named.title ?? null, dir, prompt, nameGiven: named.nameGiven, model: check.model, harness: check.harness });
     } catch (err) {
       if (err?.status) throw new HttpError(err.message, err.status);
       throw err;
     }
     refreshFleet();
-    if (!nameGiven && check.prompt.trim() && spawnNamer && check.harness === 'claude') spawnNamer.schedule(result.tmuxSession).catch(() => {});
     stacks.join(result.tmuxSession, stack.id);
     return {
       status: 200,

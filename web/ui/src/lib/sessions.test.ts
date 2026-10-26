@@ -49,6 +49,22 @@ test('statusMeta / statusLabel', () => {
   expect(statusLabel({ status: 'busy', waiting_for: 'x' })).toBe('working')
 })
 
+// `shell`: idle at the prompt while a background task (a Monitor) runs — idle for every behaviour, marked.
+test('shell is idle with a background task', () => {
+  expect(statusMeta('shell')).toEqual({ key: 'idle', label: 'idle · background task', background: true })
+  expect(statusMeta('idle').background).toBeFalsy()
+  expect(statusLabel({ status: 'shell', waiting_for: null })).toBe('idle · background task')
+  const f: FleetResponse = {
+    self: 'laptop',
+    hosts: [{ name: 'laptop', ok: true, sessions: [s({ session_id: 'm', status: 'shell', updated_at: 5 }), s({ session_id: 'i', updated_at: 1 })] }],
+  }
+  const v = listView(f, { status: 'idle' })
+  expect(v.sessions.map((x) => x.session_id)).toEqual(['m', 'i'])
+  expect(v.counts).toEqual({ all: 2, waiting: 0, busy: 0, idle: 2, scheduled: 0 })
+  expect(listView(f, { status: 'busy' }).sessions).toEqual([])
+  expect(statusSummary(f)).toEqual({ waiting: 0, busy: 0, idle: 2 })
+})
+
 test('listView: flat, sorted by last activity, counts per status', () => {
   const v = listView(fleet, {})
   expect(v.sessions.map((x) => x.session_id)).toEqual(['b', 'c', 'a'])

@@ -37,7 +37,8 @@ function Link({ href, children }: { href: string; children: ReactNode }) {
   )
 }
 
-const codeClass = 'rounded-[5px] bg-foreground/[0.07] px-1 py-px font-mono text-[0.86em] [overflow-wrap:anywhere]'
+// Inline code and code blocks sit on a soft fill (the ink at a low strength), so they read as an inset on any surface.
+const codeClass = 'rounded-[5px] bg-fill-strong px-[0.3em] py-px font-mono text-[0.86em] [overflow-wrap:anywhere]'
 const fileClass =
   'cursor-pointer underline decoration-primary/35 decoration-dotted underline-offset-[3px] hover:decoration-primary hover:decoration-solid focus-visible:rounded-sm focus-visible:outline-2 focus-visible:outline-ring'
 
@@ -169,7 +170,7 @@ function Lines({ lines }: { lines: Inline[][] }) {
   ))
 }
 
-const HEADING = { 1: 'text-[1.14em]', 2: 'text-[1.07em]', 3: 'text-[1em] text-muted-foreground' } as const
+const HEADING = { 1: 'text-[1.2em] tracking-heading', 2: 'text-[1.1em] tracking-heading', 3: 'text-[1em]' } as const
 
 function BlockView({ b }: { b: Block }) {
   switch (b.t) {
@@ -181,29 +182,29 @@ function BlockView({ b }: { b: Block }) {
       )
     case 'h':
       return (
-        <div className={cn('mt-3 mb-1 leading-snug font-bold first:mt-0', HEADING[b.level])}>
+        <div className={cn('mt-4 mb-1 leading-snug font-semibold text-foreground first:mt-0', HEADING[b.level])}>
           <Inlines nodes={b.content} />
         </div>
       )
     case 'hr':
-      return <hr className="my-3 border-border" />
+      return <hr className="my-3 border-hairline" />
     case 'quote':
       return (
-        <blockquote className="border-l-3 border-border pl-2.5 text-muted-foreground">
+        <blockquote className="border-l-2 border-fill-strong pl-3 text-muted-foreground">
           <Lines lines={b.lines} />
         </blockquote>
       )
     case 'list': {
       const List = b.ordered ? 'ol' : 'ul'
       return (
-        <List className={cn('space-y-0.5 pl-5', b.ordered ? 'list-decimal' : 'list-disc', 'marker:text-dimmer')}>
+        <List className={cn('space-y-1 pl-5', b.ordered ? 'list-decimal marker:tabular-nums' : 'list-disc', 'marker:text-muted-foreground')}>
           {b.items.map((it, i) => {
             const Sub = it.sub?.ordered ? 'ol' : 'ul'
             return (
               <li key={i}>
                 <Inlines nodes={it.content} />
                 {it.sub ? (
-                  <Sub className={cn('mt-0.5 space-y-0.5 pl-5', it.sub.ordered ? 'list-decimal' : 'list-[circle]')}>
+                  <Sub className={cn('mt-1 space-y-1 pl-5', it.sub.ordered ? 'list-decimal' : 'list-[circle]')}>
                     {it.sub.items.map((s, j) => (
                       <li key={j}>
                         <Inlines nodes={s} />
@@ -219,12 +220,12 @@ function BlockView({ b }: { b: Block }) {
     }
     case 'table':
       return (
-        <div className="no-scrollbar -mx-0.5 overflow-x-auto">
+        <div className="no-scrollbar w-fit max-w-full overflow-x-auto rounded-lg border border-hairline">
           <table className="border-collapse text-[0.88em]">
             <thead>
               <tr>
                 {b.head.map((c, i) => (
-                  <th key={i} className="border border-border bg-muted px-2 py-1 text-left font-semibold whitespace-nowrap">
+                  <th key={i} className="bg-fill px-2.5 py-1.5 text-left font-semibold whitespace-nowrap text-foreground">
                     <Inlines nodes={c} />
                   </th>
                 ))}
@@ -234,7 +235,7 @@ function BlockView({ b }: { b: Block }) {
               {b.rows.map((r, i) => (
                 <tr key={i}>
                   {r.map((c, j) => (
-                    <td key={j} className="border border-border px-2 py-1 whitespace-nowrap">
+                    <td key={j} className="border-t border-hairline px-2.5 py-1.5 whitespace-nowrap">
                       <Inlines nodes={c} />
                     </td>
                   ))}
@@ -246,7 +247,7 @@ function BlockView({ b }: { b: Block }) {
       )
     case 'code':
       return (
-        <pre className="overflow-x-auto rounded-lg border border-border/60 bg-background/60 px-2.5 py-2 font-mono text-[0.84em] leading-relaxed">
+        <pre className="overflow-x-auto rounded-xl bg-fill px-3 py-2.5 font-mono text-[0.84em] leading-relaxed shadow-[inset_0_0_0_1px_var(--edge)]">
           <code data-lang={b.lang || undefined}>{b.text}</code>
         </pre>
       )

@@ -23,7 +23,12 @@
     "briefs": { "enabled": false, "model": "haiku", "idleMs": 60000, "minIntervalMs": 900000, "maxDeltaChars": 12000, "maxCallsPerHour": 12 },
     "uploads": { "dir": "~/.local/share/fleet/uploads", "maxMB": 100, "retentionDays": 14 },
     "files": { "roots": [] },
-    "notes": { "root": "~/Code/notes", "name": "Notes", "searchCmd": null, "exclude": ["drafts"] }
+    "sessionStyles": [{ "label": "Watcher", "match": { "command": "/my-plugin:watch" }, "color": "electric" }],
+    "notes": { "root": "~/Code/notes", "name": "Notes", "searchCmd": null, "exclude": ["drafts"] },
+    "tasks": {
+      "productive": { "keychain": { "service": "productive-token" } },
+      "quickStart": { "label": "Plan", "prompt": "Plan the work for {url} ({title})", "dir": "Work" }
+    }
   },
   "grouping": { "enabled": true, "model": "haiku", "host": "workstation" },
   "tmux": null,

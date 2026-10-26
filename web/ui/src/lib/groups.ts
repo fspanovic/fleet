@@ -5,6 +5,7 @@ import type { GroupMember, GroupRun, GroupsResponse, Session, SessionGroup } fro
 import type { DormantMember } from '@/lib/dormant'
 import { relTime } from '@/lib/format'
 import { byLastActivity, statusMeta, type StatusKey } from '@/lib/sessions'
+import { sessionKey } from '@/lib/shortcuts'
 
 export const UNGROUPED_ID = '__ungrouped__'
 
@@ -17,7 +18,9 @@ export interface BoardColumn {
   source: string
   /** The "Ungrouped" column: live sessions no group claims yet. */
   ungrouped: boolean
-  /** Waiting first, then most recent activity. */
+  /** The default group: live sessions no group claims are shown in it (and the next pass puts them there). */
+  isDefault?: boolean
+  /** Waiting first, then most recent activity — or the user's order (`stickyCards`). */
   sessions: Session[]
   summary: StatusSummary
   /** `source: 'stack'` columns: the session stack they show (on `host`). */
@@ -67,10 +70,13 @@ export function fallbackGroups(sessions: Session[]): SessionGroup[] {
   return [...groups.values()]
 }
 
-/** The groups to draw: the server's when grouping is on, else the client fallback. */
-export function effectiveGroups(resp: GroupsResponse | null | undefined, sessions: Session[]): { groups: SessionGroup[]; fallback: boolean } {
-  if (resp?.enabled && Array.isArray(resp.groups)) return { groups: resp.groups, fallback: false }
-  return { groups: fallbackGroups(sessions), fallback: true }
+/** The groups to draw: the server's when grouping is on (with its default group), else the client fallback. */
+export function effectiveGroups(
+  resp: GroupsResponse | null | undefined,
+  sessions: Session[],
+): { groups: SessionGroup[]; fallback: boolean; defaultGroup: string | null } {
+  if (resp?.enabled && Array.isArray(resp.groups)) return { groups: resp.groups, fallback: false, defaultGroup: resp.defaultGroup ?? null }
+  return { groups: fallbackGroups(sessions), fallback: true, defaultGroup: null }
 }
 
 export function statusSummary(sessions: Session[]): StatusSummary {
@@ -98,15 +104,18 @@ export function compareColumns(a: BoardColumn, b: BoardColumn): number {
 /**
  * Join `sessions` (already filtered by search/host/status) with `groups`: every session
  * lands in exactly one column (the first group that claims it), sessions no group claims
- * go to "Ungrouped", members that are not live are dropped, and empty groups disappear —
- * except a group of the user's with no members at all (`manual`, just made on the board):
- * an empty column to drop sessions into.
+ * go to the default group's column when there is one (right away: the next pass puts them
+ * there for good), else to "Ungrouped"; members that are not live are dropped, and empty
+ * groups disappear — except a group of the user's with no members at all (`manual`, just made
+ * on the board) and the default group: an empty column to drop sessions into.
  */
 export function boardColumns(
   sessions: Session[],
   groups: SessionGroup[],
   /** A member that is not live → its dormant card (null: not dormant / filtered out). */
   dormantOf: (m: GroupMember) => DormantMember | null = () => null,
+  /** The default group's id (GroupsResponse.defaultGroup); null: none. */
+  defaultGroup: string | null = null,
 ): BoardColumn[] {
   const owner = new Map<string, number>()
   groups.forEach((g, i) => {
@@ -117,12 +126,14 @@ export function boardColumns(
   })
   const buckets: Session[][] = groups.map(() => [])
   const ungrouped: Session[] = []
+  const fallbackIdx = defaultGroup == null ? -1 : groups.findIndex((g) => g.id === defaultGroup)
   for (const s of sessions) {
     const idx = sessionKeys(s)
       .map((k) => owner.get(k))
       .find((i) => i !== undefined)
-    if (idx === undefined) ungrouped.push(s)
-    else buckets[idx].push(s)
+    if (idx !== undefined) buckets[idx].push(s)
+    else if (fallbackIdx >= 0) buckets[fallbackIdx].push(s)
+    else ungrouped.push(s)
   }
   const live = new Set(sessions.flatMap(sessionKeys))
   const placed = new Set<string>()
@@ -137,7 +148,8 @@ export function boardColumns(
       placed.add(k)
       dormant.push(d)
     }
-    if (!buckets[i].length && !dormant.length && !isEmptyOwnGroup(g)) return
+    const isDefault = i === fallbackIdx
+    if (!buckets[i].length && !dormant.length && !isEmptyOwnGroup(g) && !isDefault) return
     const list = buckets[i].sort(byUrgency)
     cols.push({
       id: g.id,
@@ -145,6 +157,7 @@ export function boardColumns(
       description: g.description ?? null,
       source: String(g.source ?? 'llm'),
       ungrouped: false,
+      ...(isDefault ? { isDefault } : {}),
       sessions: list,
       summary: statusSummary(list),
       ...(dormant.length ? { dormant } : {}),
@@ -257,6 +270,114 @@ export function reorderColumns(order: readonly string[], id: string, before: str
   return out
 }
 
+/**
+ * Manual card order (`fleet.cardOrder`): column id → card keys (`sessionKey`: `host/session_id`,
+ * which survives refreshes and renames) top to bottom. A column has an entry only once a card was
+ * dragged into place in it; columns without one keep the `byUrgency` order.
+ */
+export type CardOrders = Record<string, string[]>
+
+/** How many card keys one column remembers (absent ones are forgotten first). */
+export const CARD_ORDER_MAX = 100
+/** How many columns `fleet.cardOrder` remembers (columns not on the board, least recently arranged, go first). */
+export const CARD_COLUMNS_MAX = BOARD_ORDER_MAX
+
+/** Over `max`, drop absent ids — the earliest first — until it fits. */
+function capIds(ids: string[], present: ReadonlySet<string>, max: number): string[] {
+  if (ids.length <= max) return ids
+  let drop = ids.length - max
+  return ids.filter((id) => present.has(id) || drop-- <= 0)
+}
+
+/**
+ * `sessions` in a remembered order `prev` (card keys, top to bottom): the ones in it keep their
+ * place, the ones new to it are appended as they came and remembered (absent keys over
+ * `CARD_ORDER_MAX` are forgotten). Returns the same `sessions` / `prev` objects when nothing changed.
+ */
+export function stickyOrder(sessions: Session[], prev: string[]): { sessions: Session[]; order: string[] } {
+  const known = new Set(prev)
+  const fresh = sessions.map(sessionKey).filter((k) => !known.has(k))
+  const capped = capIds([...prev, ...fresh], new Set(sessions.map(sessionKey)), CARD_ORDER_MAX)
+  const order = capped.length !== prev.length || capped.some((k, i) => k !== prev[i]) ? capped : prev
+  const rank = new Map(order.map((k, i) => [k, i]))
+  const sorted = [...sessions].sort((a, b) => (rank.get(sessionKey(a)) ?? 0) - (rank.get(sessionKey(b)) ?? 0))
+  return { sessions: sorted.every((x, i) => x === sessions[i]) ? sessions : sorted, order }
+}
+
+/**
+ * Manually ordered columns: cards already in their column's order keep their place (live status
+ * changes never reshuffle them), cards new to it are appended in `byUrgency` order (as they came)
+ * and remembered — like `stickyColumns`. Columns never arranged by hand are left as they are.
+ * Returns the columns and the orders to remember (the same object when nothing changed).
+ */
+export function stickyCards(columns: BoardColumn[], orders: CardOrders): { columns: BoardColumn[]; orders: CardOrders } {
+  let next: CardOrders | null = null
+  const out = columns.map((c) => {
+    const prev = orders[c.id]
+    if (!prev) return c
+    const { sessions, order } = stickyOrder(c.sessions, prev)
+    if (order !== prev) (next ??= { ...orders })[c.id] = order
+    return sessions === c.sessions ? c : { ...c, sessions }
+  })
+  const ids = Object.keys(next ?? orders)
+  if (ids.length > CARD_COLUMNS_MAX) {
+    const keep = new Set(capIds(ids, new Set(columns.map((c) => c.id)), CARD_COLUMNS_MAX))
+    if (keep.size < ids.length) next = Object.fromEntries(Object.entries(next ?? orders).filter(([id]) => keep.has(id)))
+  }
+  return { columns: out, orders: next ?? orders }
+}
+
+/**
+ * `orders` with card `key` placed in column `column` just before card `before` (null: at the end).
+ * `shown` = the column's cards as drawn now: a column without an order yet starts from it.
+ * `from` = the column the card was dragged out of (a move between columns): it leaves that order.
+ * The arranged column becomes the most recent one (the last forgotten).
+ */
+export function placeCard(
+  orders: CardOrders,
+  column: string,
+  shown: readonly string[],
+  key: string,
+  before: string | null,
+  from?: string,
+): CardOrders {
+  const base = (orders[column] ?? shown).filter((k) => k !== key)
+  const at = before == null || before === key ? -1 : base.indexOf(before)
+  if (at < 0) base.push(key)
+  else base.splice(at, 0, key)
+  const next: CardOrders = {}
+  for (const [id, order] of Object.entries(orders)) {
+    if (id === column) continue
+    next[id] = from != null && id === from ? order.filter((k) => k !== key) : order
+  }
+  next[column] = base
+  return next
+}
+
+/**
+ * Where a dragged card would land among `shown` (the column's cards top to bottom) for a pointer
+ * at `y`, given each card's vertical midpoint: the card it goes before (null: the end), or
+ * undefined when dropping there would leave it where it is (same column only: `key` in `shown`).
+ */
+export function cardDropBefore(shown: readonly string[], mids: readonly number[], y: number, key: string): string | null | undefined {
+  let i = mids.findIndex((m) => y < m)
+  if (i < 0) i = shown.length
+  const from = shown.indexOf(key)
+  if (from >= 0 && (i === from || i === from + 1)) return undefined
+  return shown[i] ?? null
+}
+
+/** `fleet.cardOrder`: column id → card keys; anything malformed is dropped. */
+export function parseCardOrders(raw: unknown): CardOrders {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return {}
+  const out: CardOrders = {}
+  for (const [id, list] of Object.entries(raw)) {
+    const keys = parseIdList(list)
+    if (keys.length) out[id] = keys
+  }
+  return out
+}
+
 /** A change made on the board — the body of POST /api/groups/edit. */
 /** A group the user made on the board that nobody is in yet — shown as an empty column. */
 export const isEmptyOwnGroup = (g: SessionGroup) => g.source === 'manual' && !(g.members?.length ?? 0)
@@ -267,6 +388,8 @@ export type GroupEdit =
   | { op: 'create'; label: string }
   /** An empty group. */
   | { op: 'delete'; id: string }
+  /** Make group `id` the default one (sessions no group claims go there); null: no default. */
+  | { op: 'default'; id: string | null }
   /** Into group `to`, or (with `label`) a new group of that name — an existing one of that name is reused. */
   | { op: 'move'; host: string; session: string; to: string; label?: undefined }
   | { op: 'move'; host: string; session: string; label: string; to?: undefined }
@@ -279,9 +402,12 @@ export const PENDING_PREFIX = 'pending:'
 
 /**
  * `resp` with `edit` applied locally — the optimistic board while the server saves it
- * (mirrors `core::grouping::{rename_group, move_session}`: a moved-from group left empty goes).
+ * (mirrors `core::grouping::{rename_group, move_session, delete_group, set_default_group}`: a
+ * moved-from group left empty goes, unless it is yours or the default; deleting the default
+ * group leaves no default).
  */
 export function applyGroupEdit(resp: GroupsResponse, edit: GroupEdit): GroupsResponse {
+  if (edit.op === 'default') return { ...resp, defaultGroup: edit.id }
   if (edit.op === 'rename') {
     return { ...resp, groups: resp.groups.map((g) => (g.id === edit.id ? { ...g, label: edit.label } : g)) }
   }
@@ -289,7 +415,10 @@ export function applyGroupEdit(resp: GroupsResponse, edit: GroupEdit): GroupsRes
     const g: SessionGroup = { id: `${PENDING_PREFIX}${edit.label}`, label: edit.label, description: null, source: 'manual', members: [] }
     return { ...resp, groups: [...resp.groups, g] }
   }
-  if (edit.op === 'delete') return { ...resp, groups: resp.groups.filter((g) => g.id !== edit.id) }
+  if (edit.op === 'delete') {
+    const groups = resp.groups.filter((g) => g.id !== edit.id)
+    return resp.defaultGroup === edit.id ? { ...resp, groups, defaultGroup: null } : { ...resp, groups }
+  }
   const member = { host: edit.host, id: edit.session }
   const same = (m: { host: string; id: string }) => m.host === member.host && m.id === member.id
   let groups = resp.groups.map((g) => ({ ...g, members: (g.members ?? []).filter((m) => !same(m)) }))
@@ -301,13 +430,51 @@ export function applyGroupEdit(resp: GroupsResponse, edit: GroupEdit): GroupsRes
   }
   groups = groups
     .map((g) => (g.id === target ? { ...g, members: [...g.members, member] } : g))
-    .filter((g) => g.members.length > 0 || g.source === 'manual')
+    .filter((g) => g.members.length > 0 || g.source === 'manual' || g.id === resp.defaultGroup)
   return { ...resp, groups }
 }
 
 /** Sessions in board order (columns left→right, cards top→bottom) — the j/k cursor order. */
 export function boardOrder(columns: BoardColumn[]): Session[] {
   return columns.flatMap((c) => c.sessions)
+}
+
+/**
+ * The desktop list's sections (server groups on): the board's columns in its order. While a filter
+ * narrows the list (search, status, host) a section with no matching session hides; otherwise an
+ * empty group of the user's still shows.
+ */
+export function listSections(columns: BoardColumn[], narrowed: boolean): BoardColumn[] {
+  return narrowed ? columns.filter((c) => c.sessions.length > 0) : columns
+}
+
+/** Sessions of the sectioned list top to bottom, collapsed sections skipped — its ↑/↓ cursor order. */
+export function listSectionsOrder(sections: BoardColumn[], collapsed: readonly string[]): Session[] {
+  const shut = new Set(collapsed)
+  return boardOrder(sections.filter((c) => !shut.has(c.id)))
+}
+
+/** A column that is a group: sessions can be moved onto it, it can be renamed through a group edit (not Ungrouped, not a session stack — a stack renames through its own route). */
+export const isGroupColumn = (c: BoardColumn) => !c.ungrouped && c.source !== 'stack'
+
+/** A column whose sessions can be moved into a group: a group, or Ungrouped (not a session stack). */
+export const canMoveOutOf = (c: BoardColumn) => c.source !== 'stack'
+
+/**
+ * Row `key` of the sectioned list dropped on section `to`, by the Board's rules: back into its own
+ * section (a reorder), or — on an editable list — out of a group or Ungrouped into a group (a
+ * move; nothing moves into Ungrouped or a stack, nor out of a stack).
+ * Its section and session, or null when it may not land there.
+ */
+export function sectionDrop(sections: BoardColumn[], key: string, to: string, editable: boolean): { from: BoardColumn; session: Session } | null {
+  for (const from of sections) {
+    const session = from.sessions.find((s) => sessionKey(s) === key)
+    if (!session) continue
+    if (from.id === to) return { from, session }
+    const target = sections.find((c) => c.id === to)
+    return editable && canMoveOutOf(from) && target && isGroupColumn(target) ? { from, session } : null
+  }
+  return null
 }
 
 /** "grouped 3m ago · 1 model call", "fallback: by repo", "grouping failed 2m ago". */

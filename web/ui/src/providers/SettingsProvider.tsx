@@ -3,6 +3,7 @@ import { useEffect, useState, type ReactNode } from 'react'
 import { api } from '@/api/client'
 import { DEFAULT_SETTINGS, SettingsContext, type SettingsState } from '@/hooks/useSettings'
 import { normalizeModels } from '@/lib/models'
+import { normalizeQuickStarts } from '@/lib/tasks'
 
 /** Loads /api/settings once; the app renders with defaults until (or if never) it answers. */
 export function SettingsProvider({ children }: { children: ReactNode }) {
@@ -25,6 +26,7 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
           voice: data?.transcribe?.enabled === true,
           speak: data?.speak?.enabled === true,
           operator: data?.operator?.enabled === true,
+          taskQuickStarts: data?.tasks?.enabled === true ? normalizeQuickStarts(data.tasks.quickStart) : [],
           loaded: true,
         })
       })

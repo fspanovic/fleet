@@ -74,16 +74,16 @@ export function JobsScreen({ layout = 'screen' }: { layout?: 'screen' | 'pane' }
       aria-label="Refresh jobs"
       title="Refresh"
       onClick={() => reload()}
-      className={cn('shrink-0', pane ? 'size-11 rounded-xl' : '-my-1.5 size-11 rounded-xl')}
+      className={cn('shrink-0', pane ? 'size-9 rounded-full text-muted-foreground' : '-my-1.5 size-11 rounded-full')}
     >
       <RefreshCwIcon className="size-5" />
     </Button>
   )
 
   const content = (
-    <div className="mx-auto w-full max-w-lg space-y-3 px-4 pt-3 pb-[max(1.5rem,env(safe-area-inset-bottom))] md:max-w-2xl">
+    <div className="mx-auto w-full max-w-lg space-y-3 px-gutter pt-3 pb-[max(1.5rem,env(safe-area-inset-bottom))] md:max-w-2xl">
       {loading && !jobs.length ? (
-        <div className="space-y-2 rounded-xl border p-4">
+        <div className="space-y-2 rounded-[1.25rem] bg-fill-hover p-4">
           <Skeleton className="h-4 w-1/2" />
           <Skeleton className="h-3 w-full" />
         </div>
@@ -141,13 +141,13 @@ export function JobsScreen({ layout = 'screen' }: { layout?: 'screen' | 'pane' }
       <section aria-label="Scheduled jobs" className="flex h-full min-w-0 flex-1 flex-col bg-background">
         <header
           data-tauri-drag-region="deep"
-          className="titlebar titlebar-lead flex shrink-0 items-center gap-1 border-b py-1.5 pr-2 pl-4 [--titlebar-pad:1rem]"
+          className="titlebar titlebar-lead flex shrink-0 items-center gap-1 py-2.5 pr-3 pl-6 [--titlebar-pad:1.5rem]"
         >
-          <h1 className="flex min-w-0 flex-1 items-center gap-1.5 text-[0.9375rem] leading-tight font-bold">
+          <h1 className="flex min-w-0 flex-1 items-center gap-1.5 text-xl leading-tight font-bold tracking-(--tracking-display)">
             <CalendarClockIcon className="size-4 text-muted-foreground" /> Scheduled jobs
           </h1>
           {refreshButton}
-          <Button variant="ghost" size="icon" aria-label="Close jobs" title="Close (Esc)" onClick={back} className="size-11 shrink-0 rounded-xl">
+          <Button variant="ghost" size="icon" aria-label="Close jobs" title="Close (Esc)" onClick={back} className="size-11 shrink-0 rounded-full">
             <XIcon className="size-5" />
           </Button>
         </header>
@@ -161,10 +161,10 @@ export function JobsScreen({ layout = 'screen' }: { layout?: 'screen' | 'pane' }
     <div ref={screenRef} className="flex min-h-app flex-col bg-background">
       <ScreenHeader>
         <div className="-ml-2 flex min-h-8 items-center gap-1">
-          <Button variant="ghost" size="icon" aria-label="Back" onClick={back} className="-my-1.5 size-11 shrink-0 rounded-xl">
+          <Button variant="ghost" size="icon" aria-label="Back" onClick={back} className="-my-1.5 size-11 shrink-0 rounded-full">
             <ChevronLeftIcon className="size-6" />
           </Button>
-          <h1 className="flex-1 text-xl font-bold tracking-tight">Jobs</h1>
+          <h1 className="flex-1 text-2xl font-bold tracking-(--tracking-display)">Jobs</h1>
           {refreshButton}
         </div>
       </ScreenHeader>
@@ -198,7 +198,7 @@ function JobCard({
   const waiting = j.live?.some((l) => l.status === 'waiting')
   const prompt = promptLabel(j.prompt)
   return (
-    <section aria-label={`Job ${j.name} on ${j.host}`} className="rounded-xl border bg-card">
+    <section aria-label={`Job ${j.name} on ${j.host}`} className="rounded-[1.25rem] bg-card shadow-float">
       <div className="flex items-start gap-3 p-3.5">
         <button
           type="button"
@@ -315,12 +315,12 @@ function RunItem({ run: r, host, now, fleet }: { run: JobRun; host: string; now:
   const rows = runTree(r)
   const tone = outcomeTone(r.outcome)
   return (
-    <li className="rounded-lg border bg-background/50 px-3 py-2">
+    <li className="rounded-xl bg-fill-hover px-3 py-2">
       <div className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5 text-xs">
         <span className={cn('font-semibold', OUTCOME_TEXT[tone])}>{r.outcome}</span>
         <span className="text-muted-foreground">{whenLabel(r.startedAt, now)}</span>
         <span className="text-dimmer">{r.trigger}</span>
-        <span className="ml-auto font-mono text-[0.6875rem] text-dimmer">{r.id}</span>
+        <span className="ml-auto font-mono text-2xs text-dimmer">{r.id}</span>
       </div>
       {r.reason ? <p className="mt-0.5 text-xs break-words text-muted-foreground">{r.reason}</p> : null}
       {rows.length ? (

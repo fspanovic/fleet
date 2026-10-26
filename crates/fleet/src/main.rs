@@ -5,8 +5,8 @@ use colored::Colorize;
 
 use fleet::cli::{
     brief as brief_cmd, commands, config_cmd, group, hosts as host_cmds, init, jobs as jobs_cmd,
-    mcp, prs as prs_cmd, repos as repos_cmd, restore, skill, stack as stack_cmds,
-    tmux as tmux_cmds, usage as usage_cmd, web,
+    mcp, prs as prs_cmd, repos as repos_cmd, restore, scratch, skill, stack as stack_cmds,
+    tmux as tmux_cmds, usage as usage_cmd, web, workspace as workspace_cmd,
 };
 use fleet::core::config;
 use fleet::core::discovery::Backend;
@@ -212,9 +212,15 @@ enum Commands {
         /// Create an empty group named --label (yours: it stays, empty or not, until --delete)
         #[arg(long, requires = "label", conflicts_with_all = ["apply", "refresh", "consolidate", "all_hosts", "input", "cached", "rename", "move_session", "delete"])]
         create: bool,
-        /// Delete an empty group (by id)
+        /// Delete an empty group (by id); deleting the default group leaves no default
         #[arg(long, value_name = "GROUP_ID", conflicts_with_all = ["apply", "refresh", "consolidate", "all_hosts", "input", "cached", "rename", "move_session", "label"])]
         delete: Option<String>,
+        /// Make a group (by id) the default one: sessions no group claims go there, not to the model's pick
+        #[arg(long, value_name = "GROUP_ID", conflicts_with_all = ["apply", "refresh", "consolidate", "all_hosts", "input", "cached", "rename", "move_session", "label", "create", "delete", "clear_default"])]
+        set_default: Option<String>,
+        /// Unset the default group
+        #[arg(long, conflicts_with_all = ["apply", "refresh", "consolidate", "all_hosts", "input", "cached", "rename", "move_session", "label", "create", "delete"])]
+        clear_default: bool,
     },
 
     /// A session's brief: what it is doing, what it produced, its todos (read, edit, regenerate, open)
@@ -259,7 +265,7 @@ enum Commands {
         /// Backend to spawn into (default: tmux inside tmux, over ssh or off macOS; else iterm)
         #[arg(long, value_enum)]
         backend: Option<BackendArg>,
-        /// Display name for the new session (as shown by `list`/`watch`)
+        /// Display name for the new session (as shown by `list`/`watch`); default: a random free word, which also names its tmux session
         #[arg(long)]
         name: Option<String>,
         /// Model for the new session (`<harness> --model <id>`; default: the harness's own)
@@ -274,6 +280,19 @@ enum Commands {
         /// Open a new window instead of a tab (iterm backend only)
         #[arg(long)]
         window: bool,
+        /// Start it in a new git worktree of --dir's repo: <workspaces.root>/<repo>/<handle> on a
+        /// new branch <prefix>/<handle> off the remote's default branch (see `fleet workspace`)
+        #[arg(long, conflicts_with = "from")]
+        worktree: bool,
+        /// The worktree's handle (folder, branch leaf, first name); default: a random free word
+        #[arg(long, requires = "worktree")]
+        handle: Option<String>,
+    },
+
+    /// Workspaces: a new git worktree per session, its branch and title named after the work
+    Workspace {
+        #[command(subcommand)]
+        cmd: WorkspaceCmd,
     },
 
     /// Coding-agent harnesses on this host (claude, codex, pi): installed, command, models
@@ -286,6 +305,16 @@ enum Commands {
     Stack {
         #[command(subcommand)]
         cmd: StackCmd,
+    },
+
+    #[command(
+        about = "The scratchpad (the web UI's ⌘⇧S buffer, kept by this host's web server): print it, or add a note"
+    )]
+    Scratch {
+        #[arg(long, help = "Machine-readable output: { text, updatedAt, exists }")]
+        json: bool,
+        #[command(subcommand)]
+        cmd: Option<ScratchCmd>,
     },
 
     /// Claude subscription usage limits: session (5h), weekly, per-model weekly, extra usage
@@ -311,7 +340,7 @@ enum Commands {
         /// Backend to hand off into (same default as spawn)
         #[arg(long, value_enum)]
         backend: Option<BackendArg>,
-        /// Display name for the new session (as shown by `list`/`watch`)
+        /// Display name for the new session (as shown by `list`/`watch`); default: a random free word, which also names its tmux session
         #[arg(long)]
         name: Option<String>,
         /// Model for the new session (`<harness> --model <id>`; default: the harness's own)
@@ -603,7 +632,7 @@ enum StackCmd {
         target: String,
         /// The sibling's first prompt (after the stack's context line)
         prompt: Option<String>,
-        /// Display name for the new session
+        /// Display name for the new session; default: a random free word
         #[arg(long)]
         name: Option<String>,
         /// Model for the new session (`<harness> --model <id>`)
@@ -755,6 +784,32 @@ enum TmuxCmd {
 }
 
 #[derive(Subcommand, Clone)]
+enum WorkspaceCmd {
+    /// Make a workspace (a worktree on a new branch off the remote's default branch), no session
+    New {
+        /// A directory in the repo (default: the current directory)
+        #[arg(long)]
+        dir: Option<String>,
+        /// Folder name and branch leaf; default: a random free word
+        #[arg(long)]
+        handle: Option<String>,
+        #[arg(long)]
+        json: bool,
+    },
+    /// Name a workspace session after its work: branch <prefix>/<handle> → <prefix>/<slug>
+    /// (only when unpushed and fleet-made) and the session title (unless named by hand)
+    Name {
+        /// The session (title, name, session-id prefix or pid)
+        target: String,
+        /// Run again on one already named (new slug)
+        #[arg(long)]
+        force: bool,
+        #[arg(long)]
+        json: bool,
+    },
+}
+
+#[derive(Subcommand, Clone)]
 enum PrCmd {
     /// Check the PR out in a worktree under prs.worktrees (or find the one it is in)
     Checkout {
@@ -787,7 +842,7 @@ enum PrCmd {
         /// Backend to spawn into (default: tmux inside tmux, over ssh or off macOS; else iterm)
         #[arg(long, value_enum)]
         backend: Option<BackendArg>,
-        /// Display name for the new session
+        /// Display name for the new session; default: a random free word
         #[arg(long)]
         name: Option<String>,
         /// Model for the new session (`<harness> --model <id>`)
@@ -921,6 +976,17 @@ enum WebCmd {
         /// Only print the service definition
         #[arg(long)]
         print: bool,
+    },
+}
+
+#[derive(Subcommand)]
+enum ScratchCmd {
+    #[command(about = "Append text to the scratchpad as a new paragraph")]
+    Add {
+        #[arg(help = "The note to add")]
+        text: String,
+        #[arg(long, help = "Machine-readable output: the scratchpad after the append, plus `appended`")]
+        json: bool,
     },
 }
 
@@ -1073,6 +1139,10 @@ set one with: fleet config set hosts.{h}.ssh <alias>"
         }
         Commands::Peek { target, lines } => commands::peek(&target, lines)?,
         Commands::Usage { json, refresh } => usage_cmd::run(json, refresh)?,
+        Commands::Scratch { json, cmd } => match cmd {
+            None => scratch::show(json)?,
+            Some(ScratchCmd::Add { text, json: j }) => scratch::add(&text, json || j)?,
+        },
         Commands::Send { target, text } => commands::send(&target, &text)?,
         Commands::Rename {
             target,
@@ -1111,8 +1181,13 @@ set one with: fleet config set hosts.{h}.ssh <alias>"
             label,
             create,
             delete,
+            set_default,
+            clear_default,
         } => {
             let edit = match (rename, move_session) {
+                _ if set_default.is_some() || clear_default => {
+                    Some(group::Edit::Default { id: set_default })
+                }
                 _ if create => Some(group::Edit::Create {
                     label: label.unwrap_or_default(),
                 }),
@@ -1183,10 +1258,10 @@ set one with: fleet config set hosts.{h}.ssh <alias>"
             harness,
             tmux_session,
             window,
-        } => commands::spawn(
-            prompt,
-            from,
-            commands::SpawnOpts {
+            worktree,
+            handle,
+        } => {
+            let opts = commands::SpawnOpts {
                 dir,
                 backend: backend.map(Into::into),
                 name,
@@ -1194,8 +1269,23 @@ set one with: fleet config set hosts.{h}.ssh <alias>"
                 harness: harness.map(Into::into).unwrap_or_default(),
                 tmux_session,
                 window,
-            },
-        )?,
+            };
+            if worktree {
+                workspace_cmd::spawn(prompt, handle, opts)?
+            } else {
+                commands::spawn(prompt, from, opts)?
+            }
+        }
+        Commands::Workspace { cmd } => match cmd {
+            WorkspaceCmd::New { dir, handle, json } => {
+                workspace_cmd::new(dir.as_deref(), handle.as_deref(), json)?;
+            }
+            WorkspaceCmd::Name {
+                target,
+                force,
+                json,
+            } => workspace_cmd::name(&target, force, json)?,
+        },
         Commands::Harness { cmd } => match cmd {
             HarnessCmd::List { json, no_models } => commands::harness_list(json, !no_models)?,
         },

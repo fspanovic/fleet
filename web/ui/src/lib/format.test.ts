@@ -72,12 +72,12 @@ test('hostColorSlot: stable, in range', () => {
 })
 
 describe('context usage', () => {
-  test('bands match the CLI', () => {
+  test('bands', () => {
     expect(ctxLevel(0)).toBe('low')
-    expect(ctxLevel(59)).toBe('low')
-    expect(ctxLevel(60)).toBe('warn')
-    expect(ctxLevel(85)).toBe('warn')
-    expect(ctxLevel(86)).toBe('hot')
+    expect(ctxLevel(20)).toBe('low')
+    expect(ctxLevel(21)).toBe('warn')
+    expect(ctxLevel(40)).toBe('warn')
+    expect(ctxLevel(41)).toBe('hot')
   })
   test('token counts are compact', () => {
     expect(fmtTokens(950)).toBe('950')

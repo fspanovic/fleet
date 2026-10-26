@@ -1,12 +1,14 @@
 import { useEffect, useId, useImperativeHandle, useLayoutEffect, useMemo, useRef, useState, type ReactNode, type TouchEvent } from 'react'
-import { ArrowDownIcon, ArrowUpIcon, CornerDownLeftIcon, Loader2Icon, MicIcon, PaperclipIcon, SendHorizontalIcon, SquareIcon } from 'lucide-react'
+import { ArrowDownIcon, ArrowLeftIcon, ArrowRightIcon, ArrowUpIcon, CornerDownLeftIcon, Loader2Icon, MicIcon, PaperclipIcon, SendHorizontalIcon, SquareIcon } from 'lucide-react'
 
 import type { QuickReply, SessionKey } from '@/api/types'
 import { CompletionPopup } from '@/components/session/CompletionPopup'
 import { Button } from '@/components/ui/button'
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { useAttach } from '@/hooks/useAttach'
 import { useCompletions } from '@/hooks/useCompletions'
 import { useSettings } from '@/hooks/useSettings'
+import type { PermissionToggle } from '@/hooks/usePermissionToggle'
 import { useVoice } from '@/hooks/useVoice'
 import { MAX_SEND_CHARS } from '@/lib/chat'
 import { applySuggestion, findTrigger, rankSuggestions, toSuggestions, type Suggestion } from '@/lib/complete'
@@ -17,17 +19,22 @@ import { cn } from '@/lib/utils'
 import { appendTranscript, formatElapsed } from '@/lib/voice'
 
 /** Built-in key chips (not configurable). */
-const KEY_CHIPS: { key: SessionKey; label: string; icon?: ReactNode }[] = [
+const KEY_CHIPS: { key: SessionKey; label: string; icon?: ReactNode; text?: string }[] = [
   { key: 'Escape', label: 'Esc' },
   { key: 'Enter', label: 'Enter', icon: <CornerDownLeftIcon /> },
   { key: 'Up', label: 'Up', icon: <ArrowUpIcon /> },
   { key: 'Down', label: 'Down', icon: <ArrowDownIcon /> },
+  { key: 'Left', label: 'Left', icon: <ArrowLeftIcon /> },
+  { key: 'Right', label: 'Right', icon: <ArrowRightIcon /> },
+  { key: 'Tab', label: 'Tab', text: 'Tab' },
+  { key: 'BTab', label: 'Shift+Tab', text: '⇧Tab' },
+  { key: 'Space', label: 'Space', text: 'Space' },
 ]
 
 // Visually 40px, with the hit area stretched to 44px.
 const chipClass = cn(
-  'relative h-10 shrink-0 rounded-full border border-border bg-card px-3.5 text-sm font-medium text-muted-foreground transition-colors',
-  'after:absolute after:inset-x-0 after:-inset-y-0.5 active:bg-muted active:text-foreground disabled:opacity-50',
+  'relative h-10 shrink-0 rounded-full border border-transparent bg-fill px-3.5 text-sm font-medium text-muted-foreground transition-[color,background-color,box-shadow]',
+  'after:absolute after:inset-x-0 after:-inset-y-0.5 active:bg-fill-strong active:text-foreground disabled:opacity-50',
   'hover:text-foreground',
 )
 
@@ -64,6 +71,35 @@ export interface ComposerProps {
   sessionId?: string
   /** `/skill` autocomplete too (Claude sessions). */
   slashCommands?: boolean
+  /** Claude's permission mode: a shield beside the paperclip (hooks/usePermissionToggle.tsx); null = none. */
+  permission?: PermissionToggle | null
+}
+
+// The shield's tint over the paperclip's classes: bypass in the warning accent, an armed restart destructive.
+const PERMISSION_TONE: Record<PermissionToggle['tone'], string> = {
+  plain: '',
+  bypass: 'text-status-waiting hover:text-status-waiting',
+  armed: 'bg-destructive/10 text-destructive hover:bg-destructive/15 hover:text-destructive',
+}
+const PERMISSION_CHIP_TONE: Record<PermissionToggle['tone'], string> = {
+  plain: '',
+  bypass: 'text-status-waiting hover:text-status-waiting',
+  armed: 'border-destructive bg-destructive text-white hover:text-white',
+}
+
+/**
+ * The shield's hover tooltip (the app's Radix tooltip). The trigger is a bare inline-flex span — no
+ * margin or padding, so the row's own gap stays the spacing — because a disabled button gets no hover.
+ */
+function PermissionTip({ label, children }: { label: string; children: ReactNode }) {
+  return (
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <span className="inline-flex shrink-0">{children}</span>
+      </TooltipTrigger>
+      <TooltipContent side="top">{label}</TooltipContent>
+    </Tooltip>
+  )
 }
 
 export interface ComposerApi {
@@ -88,6 +124,7 @@ export function Composer({
   voiceHint = '',
   sessionId,
   slashCommands = false,
+  permission = null,
 }: ComposerProps) {
   const [text, setText] = useState(() => takeDraft(draftKey))
   useEffect(() => saveDraft(draftKey, text), [draftKey, text])
@@ -164,7 +201,7 @@ export function Composer({
   }
   // Mobile: quick replies + keys live in a mini drawer above the input, hidden until swiped up.
   const [chipsOpen, setChipsOpen] = useState(false)
-  // Desktop has no quick-reply / key chips at all.
+  // Desktop has no quick-reply / key chips: its keys are the terminal panel (TerminalDialog).
   const showChips = !desktop && chipsOpen
   const touchY = useRef<number | null>(null)
   const onTouchStart = (e: TouchEvent) => {
@@ -225,13 +262,15 @@ export function Composer({
     children: transcribing ? <Loader2Icon className="animate-spin" /> : recording ? <SquareIcon className="size-4 fill-current" /> : <MicIcon />,
   }
   const iconChip = cn(chipClass, 'flex items-center px-3 [&_svg]:size-4')
+  // The tooltip says it; no native `title` on top of it.
+  const { tone: permissionTone = 'plain', title: permissionTip = '', ...permissionProps } = permission ?? {}
 
   // Hardware keyboards send on Enter; touch keyboards keep Enter as a newline.
   const isTouch = typeof navigator !== 'undefined' && navigator.maxTouchPoints > 0
 
   return (
     <div
-      className="shrink-0 border-t bg-background/95 pb-safe px-safe backdrop-blur-md"
+      className="shrink-0 bg-background pb-safe px-safe"
       onTouchStart={desktop ? undefined : onTouchStart}
       onTouchEnd={desktop ? undefined : (e) => onTouchEnd(e, false)}
     >
@@ -256,7 +295,7 @@ export function Composer({
         </button>
       )}
       <form
-        className={cn(desktop ? 'mx-auto w-full max-w-4xl px-4 pt-2 pb-2' : 'mx-auto w-full max-w-3xl px-3 pb-2', locked && 'opacity-60')}
+        className={cn(desktop ? 'mx-auto w-full max-w-4xl px-6 pt-0 pb-3' : 'mx-auto w-full max-w-3xl px-3 pb-2', locked && 'opacity-60')}
         onSubmit={(e) => {
           e.preventDefault()
           submit()
@@ -270,6 +309,11 @@ export function Composer({
         <div className="min-h-0 overflow-hidden">
         <div className="no-scrollbar -mx-3 flex gap-1.5 overflow-x-auto px-3 pt-0.5 pb-2" role="toolbar" aria-label="Attach, voice, quick replies and keys">
           <button type="button" className={iconChip} {...attachProps} />
+          {permission ? (
+            <PermissionTip label={permissionTip}>
+              <button type="button" {...permissionProps} className={cn(iconChip, PERMISSION_CHIP_TONE[permissionTone])} />
+            </PermissionTip>
+          ) : null}
           {voiceEnabled ? (
             <button
               type="button"
@@ -277,7 +321,7 @@ export function Composer({
               className={cn(iconChip, recording && 'animate-pulse border-destructive bg-destructive text-white hover:text-white')}
             />
           ) : null}
-          <span aria-hidden className="mx-0.5 my-2 w-px shrink-0 bg-border" />
+          <span aria-hidden className="mx-0.5 my-2.5 w-px shrink-0 bg-hairline" />
           {quickReplies.map((q) => (
             <button
               key={`${q.label}\u0000${q.text}`}
@@ -290,7 +334,7 @@ export function Composer({
               {q.label}
             </button>
           ))}
-          <span aria-hidden className="mx-0.5 my-2 w-px shrink-0 bg-border" />
+          <span aria-hidden className="mx-0.5 my-2.5 w-px shrink-0 bg-hairline" />
           {KEY_CHIPS.map((k) => (
             <button
               key={k.key}
@@ -299,12 +343,12 @@ export function Composer({
               title={`Press ${k.label}`}
               className={cn(
                 chipClass,
-                'flex items-center px-3 font-mono text-[0.8125rem] text-status-waiting/90 [&_svg]:size-4',
+                'flex items-center px-3 font-mono text-body-sm text-status-waiting/90 [&_svg]:size-4',
               )}
               disabled={locked}
               onClick={() => onKey(k.key)}
             >
-              {k.icon ?? k.label}
+              {k.icon ?? k.text ?? k.label}
             </button>
           ))}
         </div>
@@ -312,7 +356,13 @@ export function Composer({
         </div>
         )}
 
-        <div className="relative flex items-end gap-2">
+        <div
+          className={cn(
+            'relative flex items-end gap-1 rounded-[1.625rem] bg-card p-1 shadow-dock transition-shadow duration-(--dur-base)',
+            'focus-within:shadow-[0_0_0_1px_color-mix(in_oklab,var(--ring)_70%,transparent),0_0_0_4px_color-mix(in_oklab,var(--ring)_22%,transparent),0_12px_32px_-12px_var(--shadow-tint-3)]',
+            tooLong && 'shadow-[0_0_0_1.5px_var(--destructive),0_12px_32px_-12px_var(--shadow-tint-3)]',
+          )}
+        >
           {completing ? (
             <CompletionPopup
               id={popupId}
@@ -338,13 +388,27 @@ export function Composer({
             }}
           />
           {desktop ? (
-            <Button
-              type="button"
-              variant="ghost"
-              size="icon"
-              {...attachProps}
-              className="size-11 shrink-0 rounded-full text-muted-foreground [&_svg:not([class*=size-])]:size-5"
-            />
+            // Paperclip + shield as one pair: no gap, each 32 px wide (full height), icon centres ~32 px apart.
+            <div className="flex shrink-0 items-end">
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon"
+                {...attachProps}
+                className={cn('shrink-0 rounded-full text-muted-foreground [&_svg:not([class*=size-])]:size-5', permission ? 'h-11 w-8' : 'size-11')}
+              />
+              {permission ? (
+                <PermissionTip label={permissionTip}>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="icon"
+                    {...permissionProps}
+                    className={cn('h-11 w-8 shrink-0 rounded-full text-muted-foreground [&_svg:not([class*=size-])]:size-5', PERMISSION_TONE[permissionTone])}
+                  />
+                </PermissionTip>
+              ) : null}
+            </div>
           ) : null}
           <textarea
             ref={ta}
@@ -404,10 +468,10 @@ export function Composer({
             autoComplete="off"
             spellCheck={false}
             className={cn(
-              'min-h-11 min-w-0 flex-1 resize-none rounded-[22px] border border-input bg-card px-4 py-[0.6875rem] text-base leading-[1.3125rem]',
-              'transition-colors outline-none placeholder:text-dimmer focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/40',
+              'min-h-11 min-w-0 flex-1 resize-none rounded-[1.375rem] border-0 bg-transparent py-[0.6875rem] text-base leading-[1.3125rem]',
+              desktop ? 'px-1.5' : 'px-3.5',
+              'outline-none placeholder:text-dimmer',
               'disabled:cursor-not-allowed',
-              tooLong && 'border-destructive',
             )}
           />
           {desktop && voiceEnabled ? (
@@ -428,7 +492,7 @@ export function Composer({
             size="icon"
             aria-label="Send"
             disabled={locked || empty || tooLong}
-            className="size-11 rounded-full [&_svg:not([class*='size-'])]:size-5"
+            className="size-11 shrink-0 rounded-full shadow-[0_4px_12px_-4px_color-mix(in_oklab,var(--primary)_70%,transparent)] disabled:shadow-none [&_svg:not([class*='size-'])]:size-5"
           >
             <SendHorizontalIcon />
           </Button>

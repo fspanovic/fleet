@@ -8,7 +8,6 @@ import {
   Loader2Icon,
   PencilIcon,
   StickyNoteIcon,
-  Trash2Icon,
   XIcon,
 } from 'lucide-react'
 import { toast } from 'sonner'
@@ -43,6 +42,7 @@ import {
 import { STATUS_TEXT } from '@/lib/styles'
 import { sessionTitle } from '@/lib/title'
 import { cn } from '@/lib/utils'
+import { BinIcon } from '@/components/Madrid'
 
 export interface StackSheetProps {
   /** The stack to show; null = closed. */
@@ -217,7 +217,7 @@ function StackBody({
     body = (
       <div className="flex min-h-0 flex-1 flex-col gap-2 p-4">
         {edit.conflict ? (
-          <p className="flex items-start gap-2 rounded-lg border border-status-waiting/40 bg-status-waiting/10 px-3 py-2 text-xs">
+          <p className="flex items-start gap-2 rounded-xl bg-status-waiting/10 px-3 py-2 text-xs">
             <CircleAlertIcon className="mt-px size-3.5 shrink-0 text-status-waiting" />
             <span>The StackBrief changed elsewhere while you edited. Save again to overwrite it, or Cancel to see the new version.</span>
           </p>
@@ -235,7 +235,7 @@ function StackBody({
           aria-label="StackBrief markdown"
           spellCheck={false}
           className={cn(
-            'min-h-48 w-full flex-1 resize-none rounded-lg border border-input bg-card px-3 py-2 font-mono text-[0.8125rem] leading-relaxed outline-none',
+            'min-h-48 w-full flex-1 resize-none rounded-lg border border-input bg-card px-3 py-2 font-mono text-body-sm leading-relaxed outline-none',
             'focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50',
           )}
         />
@@ -305,7 +305,7 @@ function StackBody({
         <div className="flex items-start gap-2 px-4 py-3">
           <LayersIcon className="mt-0.5 size-4 shrink-0 text-primary" />
           <div className="min-w-0 flex-1">
-            <DialogTitle className="flex min-w-0 items-center gap-1 text-[0.9375rem] leading-tight font-semibold">
+            <DialogTitle className="flex min-w-0 items-center gap-1 text-md leading-tight font-semibold">
               {s ? (
                 <InlineEdit
                   value={label}
@@ -358,7 +358,7 @@ function StackBody({
             disabled={deleting}
             onClick={() => void remove()}
           >
-            {deleting ? <Loader2Icon className="animate-spin" /> : <Trash2Icon />}
+            {deleting ? <Loader2Icon className="animate-spin" /> : <BinIcon />}
             {deleting ? 'Deleting…' : armed ? (desktop ? 'Click again to delete' : 'Tap again to delete') : 'Delete stack…'}
           </Button>
           </div>
@@ -394,7 +394,7 @@ function Members({ stack, onOpen, now }: { stack: StackView; onOpen: (m: StackMe
                   {live ? <StatusDot status={status} className="size-2" /> : <span aria-label="closed" className="inline-block size-2 shrink-0 rounded-full border border-dimmer" />}
                   <span className={cn('min-w-0 flex-1 truncate text-sm', !live && 'text-muted-foreground')}>{title}</span>
                   {elsewhere ? (
-                    <span className="flex shrink-0 items-center gap-1 text-[0.6875rem] text-dimmer" title={`Runs on ${ref.host}`}>
+                    <span className="flex shrink-0 items-center gap-1 text-2xs text-dimmer" title={`Runs on ${ref.host}`}>
                       <HostDot host={ref.host} />
                       {ref.host}
                     </span>
@@ -417,7 +417,7 @@ function Members({ stack, onOpen, now }: { stack: StackView; onOpen: (m: StackMe
 function Part({ title, aside, children }: { title: string; aside?: ReactNode; children: ReactNode }) {
   return (
     <section>
-      <h3 className="flex items-center justify-between gap-2 pb-1.5 text-[0.6875rem] font-semibold tracking-wider text-dimmer uppercase">
+      <h3 className="flex items-center justify-between gap-2 pb-1.5 text-2xs font-semibold tracking-wider text-dimmer uppercase">
         {title}
         {aside ? <span className="text-xs font-medium tracking-normal normal-case">{aside}</span> : null}
       </h3>
@@ -438,7 +438,7 @@ function Sub({ title, children }: { title: string; children: ReactNode }) {
 function Notice({ children }: { children: ReactNode }) {
   return (
     <div className="p-4">
-      <p className="flex items-start gap-2 rounded-lg border border-destructive/40 bg-destructive/10 px-3 py-2 text-xs text-destructive">
+      <p className="flex items-start gap-2 rounded-xl bg-destructive/10 px-3 py-2 text-xs text-destructive">
         <CircleAlertIcon className="mt-px size-3.5 shrink-0" />
         <span className="break-words">{children}</span>
       </p>
@@ -484,7 +484,7 @@ function ResourceRow({ r }: { r: BriefResource }) {
       {icon}
       <span className="min-w-0">
         <span className="pr-1 text-xs text-dimmer">{r.kind}</span>
-        <span className="font-mono text-[0.8125rem] break-all text-muted-foreground select-all">{text}</span>
+        <span className="font-mono text-body-sm break-all text-muted-foreground select-all">{text}</span>
       </span>
     </li>
   )

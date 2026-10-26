@@ -12,13 +12,14 @@ import { NewSessionDrawer } from '@/components/NewSessionDrawer'
 import { ModuleMenuItems } from '@/components/ModuleNav'
 import { ScreenHeader } from '@/components/ScreenHeader'
 import { SessionListSkeleton } from '@/components/SessionListSkeleton'
-import { SessionRow } from '@/components/SessionRow'
+import { SessionRowList } from '@/components/SessionRowList'
 import { StatusDot } from '@/components/StatusDot'
 import { Alert, AlertDescription } from '@/components/ui/alert'
 import { Button } from '@/components/ui/button'
 import { DropdownMenu, DropdownMenuContent, DropdownMenuTrigger } from '@/components/ui/dropdown-menu'
 import { Input } from '@/components/ui/input'
 import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group'
+import { UsageSummary } from '@/components/UsageSummary'
 import { ViewToggle } from '@/components/ViewToggle'
 import { useBoardColumns, useGroups, useViewMode } from '@/hooks/useGroups'
 import { useSettings } from '@/hooks/useSettings'
@@ -26,16 +27,14 @@ import { useNow } from '@/hooks/useNow'
 import { ALL_HOSTS, useSessionList } from '@/hooks/useSessionList'
 import { pullIntent } from '@/lib/gestures'
 import { allSessions, visibleStatusFilters, findStatusFilter, type StatusFilterId } from '@/lib/sessions'
+import { FILTER_SEGMENT, SEGMENTED, TOOLBAR } from '@/lib/styles'
 import { cn } from '@/lib/utils'
 
-const chipClass = cn(
-  'h-9 shrink-0 gap-1.5 rounded-full border border-border bg-card px-3.5 text-sm text-muted-foreground',
-  'data-[state=on]:border-primary/50 data-[state=on]:bg-accent data-[state=on]:text-accent-foreground',
-)
+const chipClass = cn('h-9 px-3.5 text-sm', FILTER_SEGMENT)
 
 export function ListScreen() {
   const now = useNow(1000)
-  const { fleet, error, query, setQuery, status, setStatus, setHostFilter, hosts, hostNames, host, view, hostCounts, summary, unreachable, note } =
+  const { fleet, error, query, setQuery, status, setStatus, setHostFilter, hosts, hostNames, host, view, moveRow, hostCounts, summary, unreachable, note } =
     useSessionList(now)
   const [newOpen, setNewOpen] = useState(false)
   const [, navigate] = useLocation()
@@ -68,13 +67,14 @@ export function ListScreen() {
   }
 
   return (
-    <div className="flex min-h-app flex-col overflow-x-clip">
-      <ScreenHeader>
+    // The list sits on the tinted frame, so each session card (its own surface) stands off the page.
+    <div className="flex min-h-app flex-col overflow-x-clip bg-frame">
+      <ScreenHeader className="bg-frame/72">
         <div onTouchStart={onTouchStart} onTouchEnd={(e) => onTouchEnd(e, false)}>
         <div className="flex min-h-8 items-center gap-0.5 min-[400px]:gap-1 sm:gap-2.5">
-          <h1 className="mr-1 shrink-0 text-xl font-bold tracking-tight sm:mr-0">Fleet</h1>
+          <h1 className="brand-title mr-1.5 shrink-0 text-2xl font-bold tracking-(--tracking-display) sm:mr-0">Fleet</h1>
           {fleet ? (
-            <div className="flex min-w-0 items-center gap-2 overflow-hidden text-xs text-muted-foreground tabular-nums" aria-label="Status summary">
+            <div className="flex min-w-0 items-center gap-2 overflow-hidden text-xs font-medium text-muted-foreground tabular-nums" aria-label="Status summary">
               {summary.waiting > 0 ? (
                 <span className="flex items-center gap-1 font-semibold text-status-waiting">
                   <StatusDot status="waiting" className="size-2" />
@@ -105,7 +105,8 @@ export function ListScreen() {
               </a>
             </Button>
           ) : null}
-          <Button asChild variant="ghost" size="icon" className="-my-1 size-8 shrink-0 rounded-full min-[400px]:size-9 sm:size-10 text-muted-foreground [&_svg:not([class*='size-'])]:size-5">
+          <div className={cn(TOOLBAR, '-my-1')}>
+          <Button asChild variant="ghost" size="icon" className="size-8 shrink-0 rounded-full min-[400px]:size-9 text-muted-foreground [&_svg:not([class*='size-'])]:size-5">
             <a href="#/prs" aria-label="Pull requests" title="Pull requests">
               <GitPullRequestIcon />
             </a>
@@ -118,7 +119,7 @@ export function ListScreen() {
                 size="icon"
                 aria-label="More"
                 title="More"
-                className="-my-1 size-8 shrink-0 rounded-full min-[400px]:size-9 sm:size-10 text-muted-foreground [&_svg:not([class*='size-'])]:size-5"
+                className="size-8 shrink-0 rounded-full min-[400px]:size-9 text-muted-foreground [&_svg:not([class*='size-'])]:size-5"
               >
                 <EllipsisIcon />
               </Button>
@@ -128,20 +129,23 @@ export function ListScreen() {
               <ModuleMenuItems exclude={['prs', 'operator']} />
             </DropdownMenuContent>
           </DropdownMenu>
+          </div>
           <Button
             size="icon"
             aria-label="New session"
             title="New session"
             onClick={() => setNewOpen(true)}
-            className="-my-1 size-8 shrink-0 rounded-full min-[400px]:size-9 sm:size-10 [&_svg:not([class*='size-'])]:size-5"
+            className="-my-1 ml-1 size-9 shrink-0 rounded-full min-[400px]:size-10 shadow-[0_6px_16px_-6px_color-mix(in_oklab,var(--primary)_75%,transparent)] [&_svg:not([class*='size-'])]:size-5"
           >
             <PlusIcon />
           </Button>
         </div>
 
+        <UsageSummary layout="strip" className="mt-1.5 -mx-1 px-1 py-0.5" />
+
         <div className="mt-2 flex items-center gap-2">
         <div className="relative min-w-0 flex-1">
-          <SearchIcon className="pointer-events-none absolute top-1/2 left-3 size-4 -translate-y-1/2 text-dimmer" />
+          <SearchIcon className="pointer-events-none absolute top-1/2 left-3.5 size-4 -translate-y-1/2 text-dimmer" />
           <Input
             type="search"
             inputMode="search"
@@ -153,7 +157,7 @@ export function ListScreen() {
             aria-label="Search sessions"
             value={query}
             onChange={(e) => setQuery(e.target.value)}
-            className="h-11 rounded-xl bg-card pr-10 pl-9 text-base md:text-base [&::-webkit-search-cancel-button]:hidden"
+            className="h-11 rounded-full border-transparent bg-fill pr-10 pl-10 text-base shadow-none focus-visible:border-transparent focus-visible:bg-card md:text-base [&::-webkit-search-cancel-button]:hidden"
           />
           {query ? (
             <button
@@ -170,7 +174,7 @@ export function ListScreen() {
         </div>
 
         <div
-          className={cn('grid transition-[grid-template-rows] duration-200 ease-out', filtersOpen ? 'grid-rows-[1fr]' : 'grid-rows-[0fr]')}
+          className={cn('grid transition-[grid-template-rows] duration-(--dur-slow) ease-out', filtersOpen ? 'grid-rows-[1fr]' : 'grid-rows-[0fr]')}
           inert={!filtersOpen}
         >
         <div className="min-h-0 overflow-hidden">
@@ -179,12 +183,13 @@ export function ListScreen() {
           value={status}
           onValueChange={(v) => v && setStatus(v as StatusFilterId)}
           aria-label="Filter by status"
-          className="no-scrollbar mt-2 w-full overflow-x-auto"
+          spacing={0.5}
+          className={cn(SEGMENTED, 'no-scrollbar mt-2.5 w-full overflow-x-auto')}
         >
           {visibleStatusFilters(fleet ? view.counts : null, status).map((f) => (
             <ToggleGroupItem key={f.id} value={f.id} className={chipClass} title={f.id === 'scheduled' ? 'Sessions started by scheduled jobs' : undefined}>
               <StatusFilterLabel filter={f} />
-              <span className="text-xs text-dimmer tabular-nums group-data-[state=on]/toggle:text-accent-foreground/70">
+              <span className="text-xs text-dimmer tabular-nums group-data-[state=on]/toggle:text-muted-foreground">
                 {fleet ? view.counts[f.id] : ''}
               </span>
             </ToggleGroupItem>
@@ -197,13 +202,14 @@ export function ListScreen() {
             value={host ?? ALL_HOSTS}
             onValueChange={(v) => v && setHostFilter(v)}
             aria-label="Filter by host"
-            className="no-scrollbar mt-2 w-full overflow-x-auto"
+            spacing={0.5}
+            className={cn(SEGMENTED, 'no-scrollbar mt-2 w-full overflow-x-auto')}
           >
-            <ToggleGroupItem value={ALL_HOSTS} className={cn(chipClass, 'h-8 text-[0.8125rem]')}>
+            <ToggleGroupItem value={ALL_HOSTS} className={cn(chipClass, 'h-8 text-body-sm')}>
               All
             </ToggleGroupItem>
             {hosts.map((h) => (
-              <ToggleGroupItem key={h.name} value={h.name} className={cn(chipClass, 'h-8 text-[0.8125rem]')}>
+              <ToggleGroupItem key={h.name} value={h.name} className={cn(chipClass, 'h-8 text-body-sm')}>
                 <HostDot host={h.name} />
                 <span className={cn(h.ok === false && 'text-destructive')}>{h.name}</span>
                 <span className="text-xs text-dimmer tabular-nums">{h.ok === false ? '!' : (hostCounts.get(h.name) ?? 0)}</span>
@@ -256,7 +262,7 @@ export function ListScreen() {
       </ScreenHeader>
 
       <main className="flex-1 pb-safe px-safe">
-        <div className={cn('mx-auto w-full max-w-3xl px-3 pt-2', settings.operator ? 'pb-28' : 'pb-8')}>
+        <div className={cn('mx-auto w-full max-w-3xl px-gutter pt-2', settings.operator ? 'pb-28' : 'pb-8')}>
           {error ? (
             <Alert variant="destructive" className="my-2">
               <AlertDescription>
@@ -278,11 +284,7 @@ export function ListScreen() {
           ) : board && columns.length > 0 ? (
             <GroupedList columns={columns} now={now} />
           ) : view.sessions.length > 0 ? (
-            <div className="flex flex-col gap-2">
-              {view.sessions.map((s) => (
-                <SessionRow key={`${s.host}/${s.session_id}`} session={s} now={now} />
-              ))}
-            </div>
+            <SessionRowList className="flex flex-col gap-2.5" sessions={view.sessions} now={now} onMove={moveRow} />
           ) : unreachable.length === 0 ? (
             <EmptyState anySessions={allSessions(fleet).length > 0} />
           ) : null}
@@ -298,7 +300,7 @@ export function ListScreen() {
           href="#/operator"
           aria-label="Talk to the operator"
           title="Operator — talk to the fleet"
-          className="fixed right-[max(1rem,env(safe-area-inset-right))] bottom-[max(1.25rem,calc(env(safe-area-inset-bottom)+0.5rem))] z-30 grid size-14 place-items-center rounded-full bg-primary text-primary-foreground shadow-lg transition-transform active:scale-95"
+          className="fixed right-[max(1rem,env(safe-area-inset-right))] bottom-[max(1.25rem,calc(env(safe-area-inset-bottom)+0.5rem))] z-30 grid size-14 place-items-center rounded-full bg-primary text-primary-foreground shadow-xl transition-[scale,box-shadow] duration-(--dur-fast) ease-spring active:scale-95"
         >
           <MicIcon className="size-6" />
         </a>

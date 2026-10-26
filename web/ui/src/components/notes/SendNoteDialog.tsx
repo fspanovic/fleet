@@ -22,7 +22,7 @@ export function SendNoteDialog({ open, onOpenChange, host, absPath }: { open: bo
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-h-[80vh] gap-0 overflow-hidden p-0 sm:max-w-md">
         <div className="border-b px-4 py-3">
-          <DialogTitle className="text-[0.9375rem]">Send to a session on {host}</DialogTitle>
+          <DialogTitle className="text-md">Send to a session on {host}</DialogTitle>
           <DialogDescription className="text-xs">The note’s path goes into its composer; nothing is sent until you do.</DialogDescription>
         </div>
         <ul className="max-h-[60vh] overflow-y-auto p-1.5">
@@ -41,9 +41,9 @@ export function SendNoteDialog({ open, onOpenChange, host, absPath }: { open: bo
                 <StatusDot status={s.status} className="size-2" />
                 <span className="min-w-0 flex-1">
                   <span className="block truncate text-sm font-medium">{sessionTitle(s)}</span>
-                  {s.cwd ? <span className="block truncate font-mono text-[0.6875rem] text-dimmer">{shortCwd(s.cwd, 48)}</span> : null}
+                  {s.cwd ? <span className="block truncate font-mono text-2xs text-dimmer">{shortCwd(s.cwd, 48)}</span> : null}
                 </span>
-                <span className="shrink-0 text-[0.6875rem] text-muted-foreground">{statusLabel(s)}</span>
+                <span className="shrink-0 text-2xs text-muted-foreground">{statusLabel(s)}</span>
               </button>
             </li>
           ))}

@@ -3,7 +3,6 @@ import { CheckIcon, FolderIcon, GitForkIcon, LayersIcon, Loader2Icon, MicIcon, P
 import { toast } from 'sonner'
 
 import { api, ApiError } from '@/api/client'
-import { watchForSpawned } from '@/api/spawnWatch'
 import { DropOverlay } from '@/components/DropOverlay'
 import { HostDot } from '@/components/HostBadge'
 import { Alert, AlertDescription } from '@/components/ui/alert'
@@ -12,76 +11,54 @@ import { Kbd } from '@/components/ui/kbd'
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { Drawer, DrawerContent, DrawerDescription, DrawerHeader, DrawerTitle } from '@/components/ui/drawer'
 import { Label } from '@/components/ui/label'
+import { Switch } from '@/components/ui/switch'
 import { Textarea } from '@/components/ui/textarea'
 import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group'
 import { useAttach, useFileDrop } from '@/hooks/useAttach'
 import { useFleet } from '@/hooks/useFleet'
 import { useHarnesses } from '@/hooks/useHarnesses'
 import { useSettings } from '@/hooks/useSettings'
+import { useSquadPick } from '@/hooks/useSquad'
 import { useVoice } from '@/hooks/useVoice'
 import type { SiblingTarget } from '@/hooks/useStackUi'
-import { copyText } from '@/lib/clipboard'
 import { shortCwd } from '@/lib/format'
 import { harnessLabel, modelKey, offeredHarnesses, pickHarness } from '@/lib/harness'
 import { pickModel } from '@/lib/models'
+import { clearDraftIf, followSpawn, loadDraft, saveDraft } from '@/lib/spawnFlow'
 import { storage } from '@/lib/storage'
-import { sessionHref, spawnTargets } from '@/lib/sessions'
+import { spawnTargets } from '@/lib/sessions'
+import { settleLegend, type Legend } from '@/lib/squad'
 import { isMacPlatform, isSubmitChord } from '@/lib/shortcuts'
 import { stackErrorMessage, stacksMissing } from '@/lib/stacks'
 import { cn } from '@/lib/utils'
 import { appendTranscript, formatElapsed } from '@/lib/voice'
+import { WORKTREE_KEY, worktreeChoice } from '@/lib/workspace'
 
 const HOST_KEY = 'fleet.spawnHost'
 const dirKey = (host: string) => `fleet.spawnDirLabel.${host}`
 const HARNESS_KEY = 'fleet.spawnHarness'
 // Past this many models a harness's picker is a dropdown, not chips (pi lists dozens).
 const MODEL_CHIPS_MAX = 8
-// The unsent first prompt of a plain New session (not a prefilled "continue"), so closing the form,
-// a reload, a crash or a failed spawn never loses it; cleared once the started session registers. Stale after a week.
-const DRAFT_KEY = 'fleet.spawnDraft'
-const DRAFT_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000
-
-function loadDraft(): string {
-  const d = storage.getJSON<{ prompt?: unknown; at?: unknown }>(DRAFT_KEY)
-  if (!d || typeof d.prompt !== 'string' || typeof d.at !== 'number' || Date.now() - d.at > DRAFT_MAX_AGE_MS) return ''
-  return d.prompt
-}
-
-function saveDraft(prompt: string) {
-  if (prompt.trim()) storage.setJSON(DRAFT_KEY, { prompt, at: Date.now() })
-  else storage.remove(DRAFT_KEY)
-}
-/** A started session registered: drop the draft it came from (not a newer one typed since). */
-function clearDraftIf(sent: string) {
-  if (loadDraft() === sent) storage.remove(DRAFT_KEY)
-}
-
-/**
- * A spawn that never showed up: its prompt becomes the draft (a "continue" / sibling one too,
- * unless a newer draft exists) and the toast offers to copy it.
- */
-function notShownUp(name: string, id: string | number, sent: string) {
-  const kept = sent.trim() !== ''
-  if (kept && !loadDraft().trim()) saveDraft(sent)
-  toast.error(`${name} has not shown up yet`, {
-    id,
-    description: kept ? 'Check the list in a moment. Your prompt is kept in New session.' : 'Check the list in a moment',
-    ...(kept ? { action: { label: 'Copy prompt', onClick: () => void copyText(sent) } } : {}),
-  })
-}
-
 // Radix ToggleGroup treats '' as "nothing selected": the default model ('' = no --model) needs a stand-in.
 const DEFAULT_MODEL_VALUE = '__default'
 
 // The extra directory row a prefill adds when its dir is not one of the host's spawnDirs.
 const PREFILL_DIR_LABEL = 'Same as the session'
 
-/** "Continue in new session": start on this host, in this directory, with this first prompt. Nothing is remembered. */
+/**
+ * "Continue in new session" (or a session from a task): start on this host, in this directory, with
+ * this first prompt. Nothing is remembered, and the plain New session draft is left alone.
+ */
 export interface SpawnPrefill {
-  host: string
+  /** Absent: the remembered host, as a plain New session. */
+  host?: string
   /** Absolute on `host` (a session's cwd); must be one of its spawnDirs or beneath one, else the spawn is a 400. */
   dir?: string | null
   prompt?: string
+  /** The form's title (default "Continue in new session"). */
+  title?: string
+  /** Madrid: the legend signed on the Squad screen (the session is named after him). */
+  legend?: Legend
 }
 
 export interface NewSessionDrawerProps {
@@ -109,7 +86,8 @@ const sameFolderName = (a: string, b: string) => {
 /**
  * `+` in the list header: host, directory (that host's spawnDirs), model and an optional first
  * prompt → POST spawn, then watch the fleet for the new session and open it. No name field:
- * the server's auto-namer names it (tmux `fw-hhmmss` when auto-naming is off).
+ * the server names it with a random word (its tmux session and `claude -n` alike), in Madrid
+ * after the player it starts as plus its counter's next number (`Kovačić 27`).
  */
 export function NewSessionDrawer({ open, onOpenChange, onOpenSession, prefill, sibling }: NewSessionDrawerProps) {
   return (
@@ -155,12 +133,13 @@ function NewSessionForm({
   const Title = dialog ? DialogTitle : DrawerTitle
   const Description = dialog ? DialogDescription : DrawerDescription
   const { fleet, applyFleet } = useFleet()
+  const pickLegend = useSquadPick()
   const hosts = spawnTargets(fleet)
 
   const [host, setHost] = useState(() => {
     // A sibling starts where the user is looking (the source session's host); the stack's home may differ.
     if (sibling) return sibling.cwdHost ?? sibling.host
-    if (prefill && hosts.some((h) => h.name === prefill.host)) return prefill.host
+    if (prefill?.host && hosts.some((h) => h.name === prefill.host)) return prefill.host
     const remembered = storage.get(HOST_KEY)
     return hosts.find((h) => h.name === remembered)?.name ?? hosts[0]?.name ?? ''
   })
@@ -187,6 +166,8 @@ function NewSessionForm({
   const [modelChoices, setModelChoices] = useState<Record<string, string | null>>({})
   const model = pickModel(models, modelChoices[harness] ?? storage.get(modelKey(harness)))
   const [prompt, setPrompt] = useState(() => prefill?.prompt ?? (sibling ? '' : loadDraft()))
+  // New worktree: the session gets its own git worktree of the directory's repo (remembered per browser).
+  const [worktree, setWorktree] = useState(() => worktreeChoice(storage.get(WORKTREE_KEY)))
   // Keep the draft on every change (attachments typed in included); a prefill / sibling is never a draft.
   const draftable = !prefill && !sibling
   useEffect(() => {
@@ -240,6 +221,10 @@ function NewSessionForm({
     setModelChoices((m) => ({ ...m, [harness]: id }))
     storage.set(modelKey(harness), id)
   }
+  const chooseWorktree = (on: boolean) => {
+    setWorktree(on)
+    storage.set(WORKTREE_KEY, on ? '1' : '0')
+  }
   const chooseHarness = (id: string) => {
     setHarnessChoice(id)
     storage.set(HARNESS_KEY, id)
@@ -255,12 +240,14 @@ function NewSessionForm({
   const startSibling = async (sib: SiblingTarget) => {
     setBusy(true)
     setError(null)
+    const legend = pickLegend(prefill?.legend)
     try {
       const sent = prompt
       const body = {
         prompt: sent.trim() ? sent : undefined,
         model: model || undefined,
         harness: harness === 'claude' ? undefined : harness,
+        player: legend?.[1],
         // Another host than the source's: say where, and in which of its directories.
         ...(siblingSameHost ? {} : { host, dir: dir?.path }),
       }
@@ -273,19 +260,12 @@ function NewSessionForm({
         })
       const spawnHost = res.spawn?.host || res.host || sib.host
       const name = res.spawn?.name || res.spawn?.tmuxSession || 'sibling'
-      const id = toast.loading(`Starting ${name} in ${label}…`, { description: `Waiting for ${who} to register` })
-      watchForSpawned(
+      followSpawn(
         { host: spawnHost, name, tmuxSession: res.spawn?.tmuxSession ?? name },
-        {
-          onFleet: applyFleet,
-          onFound: (s) => {
-            toast.success(`${name} is up`, { id, description: undefined })
-            onOpenSession(sessionHref(s))
-          },
-          onTimeout: () => notShownUp(name, id, sent),
-        },
+        { loading: `Starting ${name} in ${label}…`, who, sent, onFleet: applyFleet, onOpenSession, legend },
       )
     } catch (err) {
+      settleLegend(legend)
       setError(stacksMissing(err) ? stackErrorMessage(err) : (err as Error)?.message || 'Failed to start')
       setBusy(false)
     }
@@ -298,6 +278,7 @@ function NewSessionForm({
     if (!dir) return setError('This host advertises no directories.')
     setBusy(true)
     setError(null)
+    const legend = pickLegend(prefill?.legend)
     try {
       const sent = prompt
       const res = await api.spawn(host, {
@@ -305,23 +286,18 @@ function NewSessionForm({
         prompt: sent.trim() ? sent : undefined,
         model: model || undefined,
         harness: harness === 'claude' ? undefined : harness,
+        worktree: worktree || undefined,
+        player: legend?.[1],
       })
       // The draft stays until the session registers: a spawn that never shows up must not lose the prompt.
       onDone()
-      const id = toast.loading(`Starting ${res.name} on ${host}…`, { description: `Waiting for ${who} to register` })
-      watchForSpawned(
+      const where = res.workspace ? ` in a new worktree (${res.workspace.branch})` : ''
+      followSpawn(
         { host, name: res.name, tmuxSession: res.tmuxSession },
-        {
-          onFleet: applyFleet,
-          onFound: (s) => {
-            clearDraftIf(sent)
-            toast.success(`${res.name} is up`, { id, description: undefined })
-            onOpenSession(sessionHref(s))
-          },
-          onTimeout: () => notShownUp(res.name, id, sent),
-        },
+        { loading: `Starting ${res.name} on ${host}${where}…`, who, sent, onFleet: applyFleet, onOpenSession, onFound: () => clearDraftIf(sent), legend },
       )
     } catch (err) {
+      settleLegend(legend)
       const status = err instanceof ApiError ? err.status : 0
       const msg = (err as Error)?.message || 'Failed to start'
       setError(status === 409 ? `${msg} — try again.` : msg)
@@ -344,7 +320,7 @@ function NewSessionForm({
               key={h.id}
               value={h.id}
               title={h.command}
-              className="h-10 shrink-0 rounded-full border border-border bg-card px-4 text-sm data-[state=on]:border-primary/50 data-[state=on]:bg-accent"
+              className="h-10 shrink-0 rounded-full border border-transparent bg-fill px-4 text-sm data-[state=on]:bg-primary/12 data-[state=on]:ring-1 data-[state=on]:ring-primary/35 data-[state=on]:ring-inset"
             >
               {h.label}
             </ToggleGroupItem>
@@ -359,7 +335,7 @@ function NewSessionForm({
           value={model}
           onChange={(e) => chooseModel(e.target.value)}
           aria-label="Model"
-          className="h-10 w-full rounded-xl border border-border bg-card px-3 text-sm outline-none focus-visible:ring-3 focus-visible:ring-ring/50"
+          className="h-10 w-full rounded-xl bg-card shadow-float px-3 text-sm outline-none focus-visible:ring-3 focus-visible:ring-ring/50"
         >
           {models.map((m) => (
             <option key={m.id || DEFAULT_MODEL_VALUE} value={m.id}>
@@ -382,7 +358,7 @@ function NewSessionForm({
               key={m.id || DEFAULT_MODEL_VALUE}
               value={m.id || DEFAULT_MODEL_VALUE}
               title={m.id || `${who}'s default model`}
-              className="h-10 shrink-0 rounded-full border border-border bg-card px-4 text-sm data-[state=on]:border-primary/50 data-[state=on]:bg-accent"
+              className="h-10 shrink-0 rounded-full border border-transparent bg-fill px-4 text-sm data-[state=on]:bg-primary/12 data-[state=on]:ring-1 data-[state=on]:ring-primary/35 data-[state=on]:ring-inset"
             >
               {m.label}
             </ToggleGroupItem>
@@ -472,7 +448,7 @@ function NewSessionForm({
             <ToggleGroupItem
               key={h.name}
               value={h.name}
-              className="h-10 gap-2 rounded-full border border-border bg-card px-4 text-sm data-[state=on]:border-primary/50 data-[state=on]:bg-accent"
+              className="h-10 gap-2 rounded-full border border-transparent bg-fill px-4 text-sm data-[state=on]:bg-primary/12 data-[state=on]:ring-1 data-[state=on]:ring-primary/35 data-[state=on]:ring-inset"
             >
               <HostDot host={h.name} />
               {h.name}
@@ -496,13 +472,13 @@ function NewSessionForm({
                 onClick={() => pickDir(d.label)}
                 className={cn(
                   'flex min-h-12 items-center gap-3 rounded-xl border px-3 py-2 text-left transition-colors',
-                  on ? 'border-primary/50 bg-accent' : 'border-border bg-card active:bg-muted',
+                  on ? 'border-transparent bg-primary/12 ring-1 ring-primary/35 ring-inset' : 'border-transparent bg-fill active:bg-fill-strong',
                 )}
               >
                 <FolderIcon className={cn('size-4 shrink-0', on ? 'text-primary' : 'text-dimmer')} />
                 <span className="min-w-0 flex-1">
                   <span className="block text-sm font-medium">{d.label}</span>
-                  <span className="block truncate font-mono text-[0.6875rem] text-dimmer">{shortCwd(d.path, 60)}</span>
+                  <span className="block truncate font-mono text-2xs text-dimmer">{shortCwd(d.path, 60)}</span>
                 </span>
                 {on ? <CheckIcon className="size-4 shrink-0 text-primary" /> : null}
               </button>
@@ -514,6 +490,17 @@ function NewSessionForm({
       )}
     </Field>
   )
+  const worktreeField = (
+    <div className="flex min-h-12 items-center justify-between gap-3 rounded-xl bg-card shadow-float px-3 py-2">
+      <div className="min-w-0">
+        <div className="text-sm font-medium">New worktree</div>
+        <div className="text-xs text-dimmer">
+          {worktree ? 'Its own git worktree and branch off the default branch, named after the work once it answers' : 'Runs in the directory itself'}
+        </div>
+      </div>
+      <Switch checked={worktree} onCheckedChange={chooseWorktree} aria-label="New worktree" />
+    </div>
+  )
   const errorBox =
     error ? (
       <Alert variant="destructive">
@@ -521,7 +508,7 @@ function NewSessionForm({
       </Alert>
     ) : null
   const submitButton = (
-    <Button type="submit" className="h-11 w-full rounded-xl text-[0.9375rem]" disabled={!canStart}>
+    <Button type="submit" className="h-11 w-full rounded-xl text-md" disabled={!canStart}>
       {busy ? <Loader2Icon className="animate-spin" /> : sibling ? <GitForkIcon /> : <PlayIcon />}
       {busy ? (sibling?.creates ? 'Creating stack…' : 'Starting…') : sibling ? 'Spawn sibling' : `Start on ${host}`}
       {dialog && !busy ? (
@@ -552,24 +539,26 @@ function NewSessionForm({
       }}
     >
       <Header className="px-0 pt-3 pb-2 text-left">
-        <Title className="text-left text-base font-semibold">{sibling ? 'Spawn sibling' : prefill ? 'Continue in new session' : 'New session'}</Title>
+        <Title className="text-left text-base font-semibold">{sibling ? 'Spawn sibling' : prefill ? (prefill.title ?? 'Continue in new session') : 'New session'}</Title>
         <Description className="text-left text-xs">
           {sibling
             ? sibling.creates
               ? `This starts a new stack around this session (one Sonnet call), then a sibling session${siblingSameHost ? ' in the same directory' : ` on ${host}`} that reads the shared StackBrief first.`
               : `A new session in the stack ${sibling.label ? `“${sibling.label}”` : ''}${siblingSameHost ? ', in the same directory' : ` on ${host}`}. It reads the shared StackBrief first${siblingSameHost ? '' : ` (through fleet, from ${sibling.host})`}.`
-            : `Starts ${who} in a new tmux session. A first-run folder trust prompt is accepted for you.`}
+            : worktree
+              ? `Starts ${who} in a new git worktree of the directory's repo, on a new branch, in a new tmux session. A first-run folder trust prompt is accepted for you.`
+              : `Starts ${who} in a new tmux session. A first-run folder trust prompt is accepted for you.`}
         </Description>
       </Header>
 
       {sibling ? (
         <div className="space-y-4 pt-1">
           <Field label={sibling.creates ? 'From' : 'Stack'}>
-            <div className="flex min-h-12 items-center gap-3 rounded-xl border border-border bg-card px-3 py-2">
+            <div className="flex min-h-12 items-center gap-3 rounded-xl bg-card shadow-float px-3 py-2">
               {sibling.creates ? <GitForkIcon className="size-4 shrink-0 text-dimmer" /> : <LayersIcon className="size-4 shrink-0 text-primary" />}
               <span className="min-w-0 flex-1">
                 <span className="block truncate text-sm font-medium">{sibling.label || (sibling.creates ? 'this session' : 'Session stack')}</span>
-                <span className="flex min-w-0 items-center gap-1.5 text-[0.6875rem] text-dimmer">
+                <span className="flex min-w-0 items-center gap-1.5 text-2xs text-dimmer">
                   <HostDot host={sibling.cwdHost ?? sibling.host} />
                   <span className="shrink-0">{sibling.cwdHost ?? sibling.host}</span>
                   {sibling.cwd ? <span className="min-w-0 truncate font-mono">· {shortCwd(sibling.cwd, 60)}</span> : null}
@@ -594,6 +583,8 @@ function NewSessionForm({
           {hostField}
 
           {dirField}
+
+          {worktreeField}
 
           {harnessField}
 

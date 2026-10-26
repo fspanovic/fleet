@@ -3,7 +3,13 @@ import { describe, expect, test } from 'vitest'
 import type { GroupsResponse, Session, SessionGroup } from '@/api/types'
 import {
   BOARD_ORDER_MAX,
+  CARD_COLUMNS_MAX,
+  CARD_ORDER_MAX,
   applyGroupEdit,
+  cardDropBefore,
+  parseCardOrders,
+  placeCard,
+  stickyCards,
   memberId,
   reorderColumns,
   UNGROUPED_ID,
@@ -13,10 +19,15 @@ import {
   effectiveGroups,
   fallbackGroups,
   groupsStatusText,
+  canMoveOutOf,
+  isGroupColumn,
+  listSections,
+  listSectionsOrder,
   parseIdList,
   parseViewMode,
   regroupToast,
   repoOf,
+  sectionDrop,
   statusSummary,
   stickyColumns,
   withStackColumns,
@@ -72,8 +83,9 @@ test('fallbackGroups: one group per repo, across hosts', () => {
 
 test('effectiveGroups: server groups when enabled, else the fallback', () => {
   const sessions = [s({ session_id: 'a', cwd: '~/Code/project' })]
-  expect(effectiveGroups(resp({ groups: [g('g1', [])] }), sessions)).toEqual({ groups: [g('g1', [])], fallback: false })
-  expect(effectiveGroups(resp({ enabled: false }), sessions).fallback).toBe(true)
+  expect(effectiveGroups(resp({ groups: [g('g1', [])] }), sessions)).toEqual({ groups: [g('g1', [])], fallback: false, defaultGroup: null })
+  expect(effectiveGroups(resp({ groups: [g('g1', [])], defaultGroup: 'g1' }), sessions).defaultGroup).toBe('g1')
+  expect(effectiveGroups(resp({ enabled: false, defaultGroup: 'g1' }), sessions)).toMatchObject({ fallback: true, defaultGroup: null })
   expect(effectiveGroups(null, sessions).groups[0].label).toBe('project')
 })
 
@@ -97,6 +109,28 @@ describe('boardColumns', () => {
     expect(cols[0].summary).toEqual({ waiting: 1, busy: 1, idle: 1, unknown: 0 })
     expect(cols[2]).toMatchObject({ label: 'Ungrouped', ungrouped: true })
     expect(cols[2].sessions.map((x) => x.session_id)).toEqual(['e'])
+  })
+
+  test('with a default group, sessions no group claims are in its column (no Ungrouped), marked; it shows when empty', () => {
+    const cols = boardColumns(
+      sessions,
+      [g('hot', [['laptop', 'b'], ['laptop', 'c']]), g('inbox', [], { source: 'manual' }), g('quiet', [['laptop', 'a']])],
+      undefined,
+      'inbox',
+    )
+    expect(cols.map((c) => [c.id, c.sessions.map((x) => x.session_id), c.isDefault ?? false])).toEqual([
+      ['hot', ['c', 'b'], false],
+      ['inbox', ['d', 'e'], true],
+      ['quiet', ['a'], false],
+    ])
+    // An empty model group made default still shows (a drop target); a default id that is gone is no default.
+    const empty = boardColumns([sessions[0]], [g('quiet', [['laptop', 'a']]), g('llm-default', [])], undefined, 'llm-default')
+    expect(empty.map((c) => [c.id, c.isDefault ?? false])).toEqual([
+      ['quiet', false],
+      ['llm-default', true],
+    ])
+    const gone = boardColumns(sessions, [g('quiet', [['laptop', 'a']])], undefined, 'nope')
+    expect(gone.map((c) => c.id)).toEqual(['quiet', UNGROUPED_ID])
   })
 
   test('a session claimed twice lands in the first group only', () => {
@@ -159,6 +193,10 @@ describe('boardColumns', () => {
 
 test('statusSummary counts unknown statuses as unknown', () => {
   expect(statusSummary([s({ status: 'weird' }), s({ status: 'busy' })])).toEqual({ waiting: 0, busy: 1, idle: 0, unknown: 1 })
+})
+
+test('statusSummary counts shell (idle with a background task running) as idle', () => {
+  expect(statusSummary([s({ status: 'shell' }), s({ status: 'idle' })])).toEqual({ waiting: 0, busy: 0, idle: 2, unknown: 0 })
 })
 
 describe('groupsStatusText', () => {
@@ -280,6 +318,25 @@ describe('applyGroupEdit', () => {
     expect(applyGroupEdit(own, { op: 'move', host: 'laptop', session: 'a', to: 'g-2' }).groups.map((x) => x.id)).toEqual(['m', 'g-2'])
   })
 
+  test('default: set and unset; deleting the default group clears it; a default group left empty stays', () => {
+    const set = applyGroupEdit(base, { op: 'default', id: 'g-2' })
+    expect(set.defaultGroup).toBe('g-2')
+    expect(applyGroupEdit(set, { op: 'default', id: null }).defaultGroup).toBeNull()
+    const emptied = applyGroupEdit(set, { op: 'move', host: 'workstation', session: 'c', to: 'g-1' })
+    expect(emptied.groups.map((x) => x.id)).toEqual(['g-1', 'g-2'])
+    expect(applyGroupEdit(emptied, { op: 'delete', id: 'g-2' })).toMatchObject({ defaultGroup: null, groups: [{ id: 'g-1' }] })
+    expect(applyGroupEdit(set, { op: 'delete', id: 'g-1' }).defaultGroup).toBe('g-2')
+  })
+
+  test('an unclaimed session shown in the default column moves out like a member', () => {
+    const r = resp({ groups: [g('inbox', [], { source: 'manual' }), g('paused', [], { source: 'manual' })], defaultGroup: 'inbox' })
+    const before = boardColumns([s({ session_id: 'n' })], r.groups, undefined, r.defaultGroup)
+    expect(before.map((c) => [c.id, c.sessions.length])).toEqual([['inbox', 1], ['paused', 0]])
+    const moved = applyGroupEdit(r, { op: 'move', host: 'laptop', session: 'n', to: 'paused' })
+    const after = boardColumns([s({ session_id: 'n' })], moved.groups, undefined, moved.defaultGroup)
+    expect(after.map((c) => [c.id, c.sessions.length])).toEqual([['paused', 1], ['inbox', 0]])
+  })
+
   test('boardColumns shows an own group with no members as an empty column, not other empty ones', () => {
     const cols = boardColumns([s({ session_id: 'a' })], [g('own', [], { source: 'manual' }), g('llm', []), g('gone', [['laptop', 'x']], { source: 'manual' })])
     expect(cols.map((c) => [c.id, c.sessions.length])).toEqual([['own', 0], [UNGROUPED_ID, 1]])
@@ -346,5 +403,198 @@ describe('withStackColumns', () => {
     expect(one.map((c) => c.id)).toEqual(['stack:st-1'])
     expect(one[0].stack).toEqual({ id: 'st-1', host: 'laptop' })
     expect(one[0].sessions.map((x) => x.session_id)).toEqual(['a', 'b'])
+  })
+})
+
+describe('manual card order', () => {
+  const col = (id: string, sessions: Session[], over: Partial<BoardColumn> = {}): BoardColumn => ({
+    id,
+    label: id,
+    description: null,
+    source: 'llm',
+    ungrouped: id === UNGROUPED_ID,
+    sessions,
+    summary: statusSummary(sessions),
+    ...over,
+  })
+  const keys = (c: BoardColumn) => c.sessions.map((x) => `${x.host}/${x.session_id}`)
+  const a = s({ session_id: 'a', updated_at: 3 })
+  const b = s({ session_id: 'b', updated_at: 2 })
+  const c = s({ session_id: 'c', updated_at: 1 })
+
+  test('a column never arranged by hand keeps its incoming (byUrgency) order and gets no entry', () => {
+    const orders = {}
+    const r = stickyCards([col('g', [a, b, c])], orders)
+    expect(keys(r.columns[0])).toEqual(['laptop/a', 'laptop/b', 'laptop/c'])
+    expect(r.orders).toBe(orders)
+  })
+
+  test('an arranged column keeps its order whatever the statuses; new cards are appended and remembered', () => {
+    const orders = { g: ['laptop/c', 'laptop/a'] }
+    // b is new to the order, and now waiting: it still goes after the arranged cards.
+    const r = stickyCards([col('g', [s({ session_id: 'b', status: 'waiting' }), a, c])], orders)
+    expect(keys(r.columns[0])).toEqual(['laptop/c', 'laptop/a', 'laptop/b'])
+    expect(r.orders).toEqual({ g: ['laptop/c', 'laptop/a', 'laptop/b'] })
+    // Stable: a second pass changes nothing (same object back, no state churn).
+    expect(stickyCards(r.columns, r.orders).orders).toBe(r.orders)
+  })
+
+  test('a card that is gone (filtered out, moved, closed) keeps its slot for when it comes back', () => {
+    const orders = { g: ['laptop/c', 'laptop/b', 'laptop/a'] }
+    const gone = stickyCards([col('g', [a, c])], orders)
+    expect(keys(gone.columns[0])).toEqual(['laptop/c', 'laptop/a'])
+    expect(gone.orders).toBe(orders)
+    expect(keys(stickyCards([col('g', [a, b, c])], gone.orders).columns[0])).toEqual(['laptop/c', 'laptop/b', 'laptop/a'])
+  })
+
+  test('the j/k order (boardOrder) follows the card order', () => {
+    const r = stickyCards([col('g', [a, b]), col('h', [c])], { g: ['laptop/b', 'laptop/a'] })
+    expect(boardOrder(r.columns).map((x) => x.session_id)).toEqual(['b', 'a', 'c'])
+  })
+
+  test('over the per-column cap, absent cards are forgotten first', () => {
+    const prev = Array.from({ length: CARD_ORDER_MAX }, (_, i) => `laptop/old${i}`)
+    const r = stickyCards([col('g', [s({ session_id: 'old50' }), s({ session_id: 'new' })])], { g: prev })
+    expect(r.orders.g).toHaveLength(CARD_ORDER_MAX)
+    expect(r.orders.g).toContain('laptop/old50')
+    expect(r.orders.g).not.toContain('laptop/old0')
+    expect(r.orders.g.at(-1)).toBe('laptop/new')
+  })
+
+  test('over the column cap, columns not on the board are forgotten first (least recently arranged)', () => {
+    const orders = Object.fromEntries(Array.from({ length: CARD_COLUMNS_MAX + 2 }, (_, i) => [`g${i}`, [`laptop/x${i}`]]))
+    const r = stickyCards([col('g0', [s({ session_id: 'x0' })])], orders)
+    expect(Object.keys(r.orders)).toHaveLength(CARD_COLUMNS_MAX)
+    expect(r.orders.g0).toEqual(['laptop/x0'])
+    expect(r.orders.g1).toBeUndefined()
+    expect(r.orders.g2).toBeUndefined()
+    expect(r.orders.g3).toBeDefined()
+    // More arranged columns on the board than the cap: nothing to forget, and no churn.
+    const many = Array.from({ length: CARD_COLUMNS_MAX + 1 }, (_, i) => col(`g${i}`, [s({ session_id: `x${i}` })]))
+    const full = Object.fromEntries(many.map((m, i) => [m.id, [`laptop/x${i}`]]))
+    expect(stickyCards(many, full).orders).toBe(full)
+  })
+
+  test('placeCard: within a column, before a card or at the end', () => {
+    expect(placeCard({ g: ['a', 'b', 'c'] }, 'g', [], 'c', 'a')).toEqual({ g: ['c', 'a', 'b'] })
+    expect(placeCard({ g: ['a', 'b', 'c'] }, 'g', [], 'a', null)).toEqual({ g: ['b', 'c', 'a'] })
+    // Unknown `before` (stale): the end.
+    expect(placeCard({ g: ['a', 'b'] }, 'g', [], 'a', 'zz')).toEqual({ g: ['b', 'a'] })
+  })
+
+  test('placeCard: a column without an order starts from the cards as drawn', () => {
+    expect(placeCard({}, 'g', ['a', 'b', 'c'], 'c', 'b')).toEqual({ g: ['a', 'c', 'b'] })
+  })
+
+  test('placeCard: from another column — it leaves that order; the arranged column becomes the most recent', () => {
+    const r = placeCard({ g: ['a', 'b'], h: ['x'], k: ['y'] }, 'h', ['x'], 'a', 'x', 'g')
+    expect(r).toEqual({ g: ['b'], k: ['y'], h: ['a', 'x'] })
+    expect(Object.keys(r)).toEqual(['g', 'k', 'h'])
+  })
+
+  test('cardDropBefore: by midpoints; its own spot is no drop', () => {
+    const shown = ['a', 'b', 'c']
+    const mids = [10, 30, 50]
+    expect(cardDropBefore(shown, mids, 5, 'x')).toBe('a')
+    expect(cardDropBefore(shown, mids, 35, 'x')).toBe('c')
+    expect(cardDropBefore(shown, mids, 60, 'x')).toBeNull()
+    expect(cardDropBefore([], [], 0, 'x')).toBeNull()
+    // Dragging b: just above or just below it leaves it where it is.
+    expect(cardDropBefore(shown, mids, 25, 'b')).toBeUndefined()
+    expect(cardDropBefore(shown, mids, 45, 'b')).toBeUndefined()
+    expect(cardDropBefore(shown, mids, 5, 'b')).toBe('a')
+    expect(cardDropBefore(shown, mids, 55, 'b')).toBeNull()
+  })
+
+  test('parseCardOrders', () => {
+    expect(parseCardOrders({ g: ['a', 1, 'b'], h: 'nope', k: [] })).toEqual({ g: ['a', 'b'] })
+    expect(parseCardOrders(['a'])).toEqual({})
+    expect(parseCardOrders(null)).toEqual({})
+  })
+})
+
+describe('desktop list sections', () => {
+  const sessions = [
+    s({ session_id: 'a', status: 'busy', updated_at: 3 }),
+    s({ session_id: 'b', status: 'waiting', updated_at: 1 }),
+    s({ session_id: 'c', updated_at: 2 }),
+    s({ session_id: 'd', updated_at: 4 }),
+  ]
+  const cols = boardColumns(sessions, [
+    g('progress', [['laptop', 'a'], ['laptop', 'b']], { source: 'manual' }),
+    g('watcher', [['laptop', 'c']], { source: 'manual' }),
+    g('paused', [], { source: 'manual' }),
+  ])
+
+  test('listSections: every column, the empty group of yours too; narrowed, only those with a match', () => {
+    expect(listSections(cols, false).map((c) => [c.id, c.sessions.length])).toEqual([
+      ['progress', 2],
+      ['watcher', 1],
+      ['paused', 0],
+      [UNGROUPED_ID, 1],
+    ])
+    expect(listSections(cols, true).map((c) => c.id)).toEqual(['progress', 'watcher', UNGROUPED_ID])
+  })
+
+  test('listSectionsOrder: section by section, rows top to bottom, collapsed sections skipped', () => {
+    expect(listSectionsOrder(cols, []).map((x) => x.session_id)).toEqual(['b', 'a', 'c', 'd'])
+    expect(listSectionsOrder(cols, ['progress', 'gone']).map((x) => x.session_id)).toEqual(['c', 'd'])
+    expect(listSectionsOrder(cols, ['progress', 'watcher', 'paused', UNGROUPED_ID])).toEqual([])
+  })
+
+  test('isGroupColumn: a group, not Ungrouped, not a session stack', () => {
+    expect(cols.map((c) => [c.id, isGroupColumn(c)])).toEqual([
+      ['progress', true],
+      ['watcher', true],
+      ['paused', true],
+      [UNGROUPED_ID, false],
+    ])
+    expect(isGroupColumn({ ...cols[0], id: 'stack:st', source: 'stack' })).toBe(false)
+  })
+
+  test('canMoveOutOf: a group or Ungrouped, not a session stack', () => {
+    expect(cols.map((c) => [c.id, canMoveOutOf(c)])).toEqual([
+      ['progress', true],
+      ['watcher', true],
+      ['paused', true],
+      [UNGROUPED_ID, true],
+    ])
+    expect(canMoveOutOf({ ...cols[0], id: 'stack:st', source: 'stack' })).toBe(false)
+  })
+
+  describe('sectionDrop', () => {
+    const e = s({ session_id: 'e', stack: { id: 'st', label: 'Stack', host: 'laptop' } })
+    const stacked: BoardColumn[] = [...cols, { ...cols[0], id: 'stack:st', source: 'stack', stack: { id: 'st', host: 'laptop' }, sessions: [e] }]
+    const from = (r: ReturnType<typeof sectionDrop>) => (r ? [r.from.id, r.session.session_id] : null)
+
+    test('a group row into another group, the empty one included', () => {
+      expect(from(sectionDrop(stacked, 'laptop/a', 'watcher', true))).toEqual(['progress', 'a'])
+      expect(from(sectionDrop(stacked, 'laptop/c', 'paused', true))).toEqual(['watcher', 'c'])
+    })
+
+    test('an Ungrouped row into any group, the empty one included', () => {
+      expect(from(sectionDrop(stacked, 'laptop/d', 'watcher', true))).toEqual([UNGROUPED_ID, 'd'])
+      expect(from(sectionDrop(stacked, 'laptop/d', 'paused', true))).toEqual([UNGROUPED_ID, 'd'])
+    })
+
+    test('back into its own section: a reorder, whatever the section', () => {
+      expect(from(sectionDrop(stacked, 'laptop/a', 'progress', false))).toEqual(['progress', 'a'])
+      expect(from(sectionDrop(stacked, 'laptop/d', UNGROUPED_ID, true))).toEqual([UNGROUPED_ID, 'd'])
+      expect(from(sectionDrop(stacked, 'laptop/e', 'stack:st', true))).toEqual(['stack:st', 'e'])
+    })
+
+    test('no move off an editable list, out of a stack, or into Ungrouped or a stack', () => {
+      expect(sectionDrop(stacked, 'laptop/a', 'watcher', false)).toBeNull()
+      expect(sectionDrop(stacked, 'laptop/d', 'watcher', false)).toBeNull()
+      expect(sectionDrop(stacked, 'laptop/e', 'watcher', true)).toBeNull()
+      expect(sectionDrop(stacked, 'laptop/a', UNGROUPED_ID, true)).toBeNull()
+      expect(sectionDrop(stacked, 'laptop/a', 'stack:st', true)).toBeNull()
+      expect(sectionDrop(stacked, 'laptop/d', 'stack:st', true)).toBeNull()
+    })
+
+    test('a row or section not in the list: no drop', () => {
+      expect(sectionDrop(stacked, 'laptop/zz', 'watcher', true)).toBeNull()
+      expect(sectionDrop(stacked, 'laptop/a', 'gone', true)).toBeNull()
+    })
   })
 })

@@ -40,14 +40,14 @@ the first rung with hits wins. Two hits on the same rung is an error that lists 
 | command | does |
 | --- | --- |
 | `fleet` | `watch` on a terminal; a one-shot `list` when stdout is piped |
-| `fleet list [--json] [-a, --all-hosts]` (alias `ls`) | live sessions: title, status, age, context usage (`ctx 62%`), terminal, cwd. `--json` is an array whose rows all carry `host`; `-a` queries every configured host in parallel. The text view ends with `N dormant (fleet restore)` when a reboot left [dormant sessions](#session-recovery). Every local `list` also records the [snapshot](#session-recovery) |
+| `fleet list [--json] [-a, --all-hosts]` (alias `ls`) | live sessions: title, status (`◎ idle · bg`: idle with a background task running, raw `shell` in `--json`), age, context usage (`ctx 62%`), terminal, cwd. `--json` is an array whose rows all carry `host`, and `subagents`: the subagents (Agent tool) each Claude session is running right now ([architecture](architecture.md#running-subagents)); `-a` queries every configured host in parallel. The text view ends with `N dormant (fleet restore)` when a reboot left [dormant sessions](#session-recovery). Every local `list` also records the [snapshot](#session-recovery) |
 | `fleet peek <target> [--lines N]` | what the session's terminal shows now (default 40 lines) |
 | `fleet send <target> <text>` | type text into the session and press Enter |
 | `fleet rename <target> <title> [--no-tmux-sync] [--force] [--json]` | rename the session's one title: Claude's `/rename` (the source of truth), then its tmux session follows as a slug of it (`Fix Login` → `fix-login`, `-2` on a collision) when the tmux session is that Claude session's own (one window, one pane). A session **waiting on a prompt** is held (exit 1; `--json`: exit 3) — typed keys would be its answer; busy sessions are fine (Claude runs `/rename` mid-turn without disturbing the turn). Codex gets `/rename`, pi `/name`; a busy Codex / pi session is held too (`held: "busy"`) — they would queue the text as a message. `--force` overrides the hold. `--json` prints `{ ok, result: renamed\|sent\|held, session_id, pid, host, from, title, held, tmux: { renamed, from, to, note }, message }` |
 | `fleet name [<target> \| --all] [--apply] [--refresh] [--no-tmux-sync]` | suggest a name from what the session is doing; only `--apply` sends it (through the same path as `rename`, tmux included). `--all` = every session with a derived (cwd+hash) name. A derived-name session alone in a tmux session somebody named (`fleet new fix-login`) adopts that name (`(tmux)`, no model call) instead of getting a generated one. `--refresh` ignores the cache |
 | `fleet group [-a, --all-hosts] [--json] [--apply] [--refresh] [--consolidate] [--input <file\|->] [--cached]` | sort sessions into work-stream groups (the web Board view) — see [Grouping](#grouping). Reads sessions and asks `claude -p`; never sends anything to a session |
-| `fleet group --rename <group id> --label <l>` / `--move <host/id> (--to <group id> \| --label <l>)` / `--create --label <l>` / `--delete <group id>` | edit the stored groups by hand (the Board's rename / drag'n'drop) — see [Grouping](#grouping) |
-| `fleet spawn [prompt] --dir <path> [--harness claude\|codex\|pi] [--name <n>] [--model <id>] [--backend iterm\|tmux] [--tmux-session <s>] [--window]` | start a new agent session in a new tab/pane. `--harness` picks the coding agent (default `claude`; see [Harnesses](#harnesses)). `--model <id>` runs `<harness> --model '<id>'` (letters, digits and `._[]-/:` only — pi's ids are `provider/model`; blank = the harness's default). `--name` is passed as `-n` to Claude and pi; Codex has no such flag (the tmux session carries the name). Default backend: tmux inside tmux, over ssh or off macOS; else iTerm. With tmux, each spawn gets its own tmux session (one session per job) named from `--name` or the dir's basename, sanitised like `fleet new`; a taken `--name` is an error, a taken basename is uniquified (`app-2`). `--tmux-session <s>` opens a window in `s` instead (created if missing) |
+| `fleet group --rename <group id> --label <l>` / `--move <host/id> (--to <group id> \| --label <l>)` / `--create --label <l>` / `--delete <group id>` / `--set-default <group id>` / `--clear-default` | edit the stored groups by hand (the Board's rename / drag'n'drop / Make default) — see [Grouping](#grouping) |
+| `fleet spawn [prompt] --dir <path> [--harness claude\|codex\|pi] [--name <n>] [--model <id>] [--backend iterm\|tmux] [--tmux-session <s>] [--window]` | start a new agent session in a new tab/pane. `--harness` picks the coding agent (default `claude`; see [Harnesses](#harnesses)). `--model <id>` runs `<harness> --model '<id>'` (letters, digits and `._[]-/:` only — pi's ids are `provider/model`; blank = the harness's default). `--name` is passed as `-n` to Claude and pi; Codex has no such flag (the tmux session carries the name). Default backend: tmux inside tmux, over ssh or off macOS; else iTerm. Without `--name` the session gets a random whimsical word (`kelpie`, `ballyhoo`) no tmux or Claude session here is called yet, used as `--name` (so it is the title from the start and auto-naming leaves it alone). With tmux, each spawn gets its own tmux session (one session per job) named from `--name` (or that word), sanitised like `fleet new`; a taken `--name` is an error. `--tmux-session <s>` opens a window in `s` instead (created if missing). `--worktree [--handle <h>]`: start it in a new git worktree of `--dir`'s repo instead — see [Workspaces](#workspaces) |
 | `fleet harness list [--json] [--no-models]` | the [harnesses](#harnesses) on this host: id, label, launch command, `installed`, and the models each offers for a picker. `-H <host>` asks another machine |
 | `fleet spawn --from <target> [prompt] [--name <n>] [--model <id>] [--backend …]` | continue a session's work in a new one: same host (with `-H`, the host the session is on) and its cwd (`--dir` overrides), first prompt = its [brief](#briefs)'s continue prompt, then a blank line and `prompt`. The prompt goes through a file under `~/.claude/fleet-handoffs/`, like a handoff. Errors when the session has no brief yet. `-n` prints the launch command and the prompt and writes nothing |
 | `fleet handoff [brief] [--file <f\|->] --dir <path> [--harness <h>] [--name <n>] [--model <id>] [--tmux-session <s>] [--tab] [--no-wait]` | start a new session in another window seeded with a brief (saved under `~/.claude/fleet-handoffs/`); waits until it registers. Same tmux placement as `spawn` |
@@ -59,7 +59,7 @@ the first rung with hits wins. Two hits on the same rung is an error that lists 
 | `fleet usage [--json] [--refresh]` | the Claude subscription's usage limits on this host's login — current session (5h), weekly all models, weekly per model (e.g. Fable), extra usage — as bars with reset times; the numbers Claude Code's `/usage` shows. Cached 60s (`--refresh` skips it); a failed read serves the last one marked stale and backs off 2 minutes. `--json`: see [architecture](architecture.md#subscription-usage). `-H <host>` reads another machine's login |
 | `fleet skill install [--force]\|show` | install / print the Claude Code skill (`~/.claude/skills/fleet/SKILL.md`; `--force` overwrites a different one) |
 
-`send`, `rename --force`, `name --apply` and `spawn` change a live agent's state — scripts and agents
+`send`, `rename --force`, `name --apply`, `workspace name` and `spawn` change a live agent's state — scripts and agents
 should confirm before running them.
 
 ### Harnesses
@@ -214,22 +214,32 @@ and keeps them stable across runs. State: `$FLEET_GROUPS_STATE`, else
   - `--create --label <l>` — a new, empty group (`source: "manual"`, the label not another
     group's). A `manual` group stays, empty or not, until `--delete <group id>`, which refuses
     a group that still has sessions.
+  - `--set-default <group id>` — the default group: from the next pass on, neither the model nor
+    the repository fallback places anything. Every session the user didn't place (new, or in a
+    model / fallback group) goes there as a `default` assignment — kept like a `manual` one,
+    never reclassified, even after the default changes or is unset — and the groups that empties
+    vanish; `manual` assignments stay where they are. The group is locked (never renamed or merged
+    away by consolidation) and stays when empty. `--clear-default` unsets it (the passes classify
+    as before); deleting the default group, or `--refresh`, leaves no default. Renaming keeps it.
 
 `--json` (stable contract):
 
 ```json
 { "version": 1, "applied": true, "updatedAt": 1790000000000,
-  "lastRun": { "at": 0, "ms": 0, "mode": "noop|incremental|full|consolidate|fallback|dry-run", "ok": true,
+  "lastRun": { "at": 0, "ms": 0, "mode": "noop|incremental|full|consolidate|fallback|default|dry-run", "ok": true,
                "modelCalls": 0, "classified": 0, "kept": 30, "pruned": 0, "created": 0, "merged": 0,
                "renamed": 0, "note": "…", "error": "…" },
   "groups": [ { "id": "g-1a2b3c4d", "label": "Fleet Board", "description": "…", "source": "llm",
                 "members": [ { "host": "laptop", "id": "<session id>", "name": "board-view" } ] } ],
   "ungrouped": [ { "host": "laptop", "id": "…", "name": "…" } ],
+  "defaultGroup": "g-1a2b3c4d",
   "hosts": { "laptop": "ok", "workstation": "unreachable: …" } }
 ```
 
 Group ids never change once created (a merge keeps the target's id); empty groups are dropped.
-`source` is `llm`, `fallback` or `manual` (made on the board); a `manual` group may have no members.
+`source` is `llm`, `fallback` or `manual` (made on the board); a `manual` group may have no members,
+and so may the default one. `defaultGroup` is the default group's id, `null` when none; a pass with
+a default set reports `mode: "default"` when it placed anything.
 A member that is dormant on its host after a reboot ([Session recovery](#session-recovery)) keeps
 its group and carries `"dormant": true` (the field is absent otherwise, and in `--cached`); a host
 whose dormant list can't be fetched has nothing pruned that run.
@@ -368,7 +378,7 @@ JSON shapes:
   `closedAt` (ISO; `since` is the same) + `tmuxSession?` (a Claude session's tmux session that
   outlived it), newest first, and DormantView =
   `{ kind: "tmux"|"claude", target, name, since, windows, panes, sessions: [{ sessionId, name,
-  title, cwd }] }`. `target` is what `fleet restore <target>` takes (the tmux name, or the full
+  title, cwd, harness? }] }` (`harness`: `"codex"` / `"pi"`, absent for Claude). `target` is what `fleet restore <target>` takes (the tmux name, or the full
   session id); `name` is the tmux name or the Claude title; `since` is when it went down (ISO).
 - `restore <target>|--all --json` — `{ host, restored: [{ kind, from, session, renamed, windows,
   panes, launched: [{ sessionId, title, line }], warnings, commands, dryRun }], failed: [{ target,
@@ -422,9 +432,9 @@ graphql`, its auth — run `gh auth login` once). Config: `prs` in [the config](
 
 | command | does |
 | --- | --- |
-| `fleet prs [--json] [--column C] [--refresh \| --cached]` | four searches (`is:pr is:open archived:false` plus `prs.orgs` / `prs.repos`), in parallel, 50 per page up to 4 pages each: `author:@me` → **draftMine** (draft) · **readyToMergeMine** (review decision approved) · **reviewMine**; `user-review-requested:@me` (asked of you by name — team requests are left out) → **waitingOnMe**; `reviewed-by:@me -author:@me` whose latest review from you is not an approval → **waitingOnAuthor**. A PR is listed once, in the first of those that claims it. The fourth, `mentions:@me` (25 per page, with each PR's last 30 comments and last 20 reviews), finds the latest `@you` by someone else in the description, a comment, a review or a review comment (`mention`); until you comment or review on that PR after it, or mark it seen (`fleet pr seen`), the PR is in **unseenMentions** instead of its own column, and a PR there only for a mention leaves the list once it is seen. Fetches when the cache is older than `prs.refresh` (default `5m`); `--refresh` always fetches, `--cached` never does. A failed fetch serves the cache with a warning (`stale`, `error`). Each PR is matched to a repo under the [`repos`](#repos) roots by directory name (by `origin` when two share it), and to the worktree that has its head branch checked out. `--column` takes `waiting-on-me`, `waitingOnMe`, … Cache: `${XDG_CACHE_HOME:-~/.cache}/fleet/prs.json` (`FLEET_PRS_CACHE`) |
+| `fleet prs [--json] [--column C] [--refresh \| --cached]` | four searches of open PRs in parallel (`is:pr is:open archived:false` plus `prs.orgs` / `prs.repos`), 50 per page up to 4 pages each: `author:@me` → **draftMine** (draft) · **readyToMergeMine** (review decision approved) · **reviewMine**; `user-review-requested:@me` (asked of you by name — team requests are left out) → **waitingOnMe**; `reviewed-by:@me -author:@me` whose latest review from you is not an approval → **waitingOnAuthor**. A PR is listed once, in the first of those that claims it. The fourth, `mentions:@me` (25 per page, with each PR's last 30 comments and last 20 reviews), finds the latest `@you` by someone else in the description, a comment, a review or a review comment (`mention`); until you comment or review on that PR after it, or mark it seen (`fleet pr seen`), the PR is in **unseenMentions** instead of its own column, and a PR there only for a mention leaves the list once it is seen. Fetches when the cache is older than `prs.refresh` (default `5m`); `--refresh` always fetches, `--cached` never does. A failed fetch serves the cache with a warning (`stale`, `error`). Each PR is matched to a repo under the [`repos`](#repos) roots — the directory named like the repo (by `origin` when two are), else the repo whose `origin` (ssh or https, `.git` or not) is the PR's `owner/repo` (the first in root order, then name, when several are) — and to the worktree that has its head branch checked out. `--column` takes `waiting-on-me`, `waitingOnMe`, … Cache: `${XDG_CACHE_HOME:-~/.cache}/fleet/prs.json` (`FLEET_PRS_CACHE`) |
 
-| `fleet pr checkout <pr> [--json]` | check one PR out in a worktree. `<pr>` is `owner/repo#123`, `repo#123` (its owner from the cache; ambiguous → error with the candidates) or the PR's URL. Asks GitHub for its head (`gh api repos/O/R/pulls/N`), finds the repo under the [`repos`](#repos) roots, and when no worktree has the branch yet: `git fetch origin <branch>`, then `git worktree add` at `<prs.worktrees>/<repo>-<branch slug>` (`-pr<N>` appended when taken) — on the local branch if there is one, else a new one tracking `origin/<branch>`. A fork's PR gets `pr-<N>` from `pull/<N>/head`. Existing branches are never reset or moved. `-n` changes nothing. `--json`: `{ owner, repo, number, title, url, headBranch, baseBranch, crossRepository, branch, path, repoPath, created, contextLine }` (`created: false` — it was already checked out) |
+| `fleet pr checkout <pr> [--json]` | check one PR out in a worktree. `<pr>` is `owner/repo#123`, `repo#123` (its owner from the cache; ambiguous → error with the candidates) or the PR's URL. Asks GitHub for its head (`gh api repos/O/R/pulls/N`), finds the repo under the [`repos`](#repos) roots (as `fleet prs` matches it: directory name, else `origin`), and when no worktree has the branch yet: `git fetch origin <branch>`, then `git worktree add` at `<prs.worktrees>/<repo>-<branch slug>` (`-pr<N>` appended when taken) — on the local branch if there is one, else a new one tracking `origin/<branch>`. A fork's PR gets `pr-<N>` from `pull/<N>/head`. Existing branches are never reset or moved. `-n` changes nothing. `--json`: `{ owner, repo, number, title, url, headBranch, baseBranch, crossRepository, branch, path, repoPath, created, contextLine }` (`created: false` — it was already checked out) |
 | `fleet pr seen <pr> [--json]` | mark the PR's @mentions of you so far seen: out of **unseenMentions** (a later mention brings it back). `<pr>` as for `pr checkout`. Kept per machine in `${XDG_STATE_HOME:-~/.local/state}/fleet/prs-seen.json` (`FLEET_PRS_SEEN`; marks older than 180 days are dropped). `-n` changes nothing. `--json`: `{ pr: "owner/repo#123", seenAt, applied }` |
 | `fleet pr cleanup-worktrees [--apply] [--json]` | the worktrees under `prs.worktrees` (of the repos under the [`repos`](#repos) roots — nothing else is ever looked at), each with a verdict. **Removed** when its branch's PR (`gh pr list --head <branch> --state all`, newest; `pr-<N>`: PR N) is merged or closed, it has no uncommitted or untracked files, nothing on it is unpublished (`HEAD` is the PR's head or behind it, or every commit is on a remote branch), and no live session's cwd is in it. Kept otherwise, with the reason (PR still open, no PR for the branch, detached HEAD, local changes, unpushed commits, a session running in it, GitHub unreachable). Without `--apply` it only lists; `--apply` runs `git worktree remove` (never `--force`) and, for a merged PR, `git branch -D` (a squash merge leaves the branch unmerged as far as git knows); a closed PR's branch stays. `-n` never removes. `--json`: `{ applied, worktrees: [{ path, repoPath, branch, pr: { number, state, url, headOid } \| null, action: "remove" \| "keep", reason, deleteBranch, error? }] }` |
 | `fleet pr spawn <pr> [prompt] [--name] [--model] [--harness] [--backend] [--tmux-session] [--window]` | `pr checkout`, then `spawn` in the worktree with the first prompt `contextLine` + `prompt`: which PR, its branch and base, the worktree path, and that `gh pr view` / `gh pr diff` show the rest. Starts an agent — confirm like `spawn` |
@@ -433,18 +443,39 @@ graphql`, its auth — run `gh auth login` once). Config: `prs` in [the config](
 (times in ms epoch; `columns` in display order; `truncated`: a search had more than 200 hits). A `Pr` is
 `{ column, owner, repo, number, title, url, author, draft, createdAt, updatedAt, additions, deletions,
 changedFiles, size, baseBranch, headBranch, crossRepository, headOid, reviewDecision, checks, comments,
-requestedReviewers, myReview, mention?, rotting, local? }`: `size` is `XS`…`XL` by lines changed (≤10, ≤100, ≤500, ≤1000);
+requestedReviewers, myReview, mention?, links, rotting, local? }`: `size` is `XS`…`XL` by lines changed (≤10, ≤100, ≤500, ≤1000);
 `reviewDecision` `approved` · `changesRequested` · `reviewRequired` · `null`; `checks` (the head
 commit's combined CI) `success` · `failure` · `error` · `pending` · `expected` · `null`;
 `requestedReviewers` logins and `@team` slugs; `myReview` `{ state, at, newCommits }` (your latest
 review, `newCommits`: the head moved since) or `null`; `mention` `{ at, author, url, excerpt, answered, seen }`
 (the latest @mention of you by someone else: where, the line it is on, whether you commented or
-reviewed after it, whether that or `fleet pr seen` makes it seen) when there is one; `rotting`
+reviewed after it, whether that or `fleet pr seen` makes it seen) when there is one; `links` the
+distinct `http(s)` URLs in the PR's description, in order, at most 20 (a URL ends at whitespace or a
+quote, bracket, `|` or backslash; trailing `.,;:!?*_~` dropped — what it links: an issue, a ticket); `rotting`
 `fresh` · `warming` · `stale` · `rotting` · `critical` — how long it has waited (since it was
 opened; in **unseenMentions** since the mention), by its column: **waitingOnMe** / **unseenMentions**
 4h · 1d · 2d · 4d, **reviewMine** / **readyToMergeMine** 1d · 3d · 7d · 14d, **waitingOnAuthor**
 2d · 5d · 10d · 14d, **draftMine** 3d · 7d · 14d · 30d (the age cell's colour in the text output); `local` `{ repoPath, worktree }` when the repo
 is checked out here (`worktree`: where the head branch is checked out, or `null`).
+
+## Workspaces
+
+Orca's "New workspace": a new session in a git worktree of its own, on a new branch off the
+remote's default branch, named after the work once it has answered. Config: `workspaces` in [the
+config](architecture.md#config) (`root`, default `~/fleet/workspaces`; `branchPrefix`, default
+your GitHub login, else a slug of `git config user.name`); the model and its rules:
+[architecture](architecture.md#workspaces). The web's New session form has the same switch (**New
+worktree**).
+
+| command | does |
+| --- | --- |
+| `fleet spawn [prompt] --dir <repo> --worktree [--handle <h>] [--name] [--model] [--harness] [--backend] [--tmux-session] [--window]` | make a workspace of the repo `--dir` is in (any directory of it, a linked worktree included; default: the current directory): fetch the remote's default branch, `git worktree add --no-track -b <prefix>/<handle> <root>/<repo>/<handle> <remote>/<default>`, then `spawn` there. `<handle>`: `--handle`, else a whimsical word no folder under the root, no branch and no tmux / Claude session is called yet. The session is named after the handle (`--name` overrides). Not with `--from`. `-n` prints the plan and changes nothing |
+| `fleet workspace new [--dir <repo>] [--handle <h>] [--json]` | the same workspace, no session. `--json`: the record `{ version, handle, path, repo, remote, base, prefix, createdBranch, branch, createdAt, slug, title, named }` (what the web's spawn uses) |
+| `fleet workspace name <target> [--force] [--json]` | name a workspace session after its work, once it has a first prompt: a slug from the naming model (as `fleet name`), the branch `<prefix>/<handle>` → `<prefix>/<slug>` — only while it is the branch fleet created, never pushed, and the new name is free — and the title (`fix-login-form` → `Fix login form`, through the `fleet rename` path) unless someone already named the session. Exit 3 when held (waiting on a prompt) or there is no first prompt yet; `--force` runs again on one already named. Every web server runs it for its host's workspace sessions once their first answer is in. `--json`: `{ ok, result: named\|kept\|held\|no-prompt\|already-named, session_id, pid, host, handle, slug, title, source, branch: { from, to, renamed, note }, message }` |
+
+Every `fleet list --json` row of a session in a workspace carries `workspace: { handle, branch, path,
+repo, base, named }`. Deleting the session in the web UI removes the worktree and, when nothing on it
+is unpushed, the branch fleet made for it.
 
 ## Repos
 
@@ -489,7 +520,7 @@ the same **run**. Config: `jobs` in [the config](architecture.md#config).
 | `command` | launcher for the job's sessions **and everything they spawn** (it travels as `FLEET_CMD`); default config `claude` |
 | `harness`, `model` | as for `fleet spawn` |
 | `enabled` | `false` pauses the job (`fleet jobs disable`). `fleet config set jobs.<name> null` removes it |
-| `keep` | default `24h`, or `"never"`: once a run is older than this, its sessions that are idle and quiet for an hour are closed (their tmux session is killed). A session waiting for input is never closed |
+| `keep` | default `24h`, or `"never"`: once a run is older than this, its sessions that are idle and quiet for an hour are closed (their tmux session is killed). A session with a background task running (`shell` status: a Monitor, a background Bash) is kept, and so is one waiting for input |
 
 A job never fires on the tick that first sees it (a job added at 08:00 with a 07:00 schedule first
 runs tomorrow). A slot more than 6 hours old when a tick sees it (the machine was off) is recorded
@@ -498,7 +529,7 @@ as `missed`; a slot that comes while a session of the job is still working is `s
 | command | does |
 | --- | --- |
 | `fleet jobs [list] [--json]` | each job: schedule, next run, last run, live sessions (working / needs you) |
-| `fleet jobs show <name> [--json]` | settings and the latest runs, each with its sessions as a tree (`└` = spawned by a job session) and their state (`busy` / `idle` / `waiting` / `closed` / `gone`) |
+| `fleet jobs show <name> [--json]` | settings and the latest runs, each with its sessions as a tree (`└` = spawned by a job session) and their state (`busy` / `idle` / `idle · background task` / `waiting` / `closed` / `gone`) |
 | `fleet jobs run <name> [--force]` | start a run now (`trigger: manual`); refuses while a session of the job is working unless `--force` |
 | `fleet jobs tick [-q]` | fire due jobs, record missed / skipped slots, close sessions past `keep` — what the service runs. Exits 1 when a job failed to start |
 | `fleet jobs enable\|disable <name>` | set `jobs.<name>.enabled` |
@@ -526,6 +557,7 @@ session list unless they need you — the **Scheduled** status filter (clock ico
 | --- | --- |
 | `fleet web serve [--port N] [--bind ADDR] [--dir PATH]` | run `node <web.dir>/server.mjs` with this machine's config (needs Node ≥ 22) |
 | `fleet web build [--dir PATH] [--install]` | build the React UI: `npm --prefix <web.dir>/ui ci` (when `node_modules` is missing, or `--install`) then `npm … run build` → `ui/dist`, which the server then serves by default. Needs a checkout (an installed web dir has only `ui/dist`) |
+| `fleet scratch [--json]` / `fleet scratch add "<text>" [--json]` | print the scratchpad (the web UI's ⌘⇧S buffer), or append `<text>` to it as a new paragraph. The scratchpad lives with this host's web server (`~/.local/state/fleet/scratchpad.txt`); the CLI reaches it with `curl` at `hosts.<self>.web`, else `http://127.0.0.1:<web.port>` (`GET /api/scratchpad`, `POST /api/scratchpad/append`), so the server must be running (`fleet web serve`). An open scratchpad shows an added note within seconds. `--json`: `{ text, updatedAt, exists }` (`add` also `appended`). `-H <host>` uses that host's scratchpad |
 | `fleet web install-service` | macOS: write and load a launchd agent that keeps `fleet web serve` running (`--uninstall`, `--no-load`, `--print`); logs to `~/Library/Logs/fleet.web.log`, runs as `ProcessType=Interactive` so macOS does not throttle it like a background job (that made `fleet list` take 10s+ under Low Power Mode); elsewhere: print a systemd user unit. The agent pins one node (config `web.node`, else `/opt/homebrew/bin/node` or `/usr/local/bin/node`, else `PATH`) and leaves version-manager dirs (nvm/volta/fnm) out of its `PATH`; if the only node is version-managed it is used with a warning |
 
 ## MCP server
@@ -601,6 +633,7 @@ fleet mcp --http [--bind 127.0.0.1] [--port 7778] --token-file ~/.config/fleet/m
 | `FLEET_JOB_RUN` | `<job>/<run>`: the [job](#jobs) run a session belongs to — set in job sessions; a spawn with it set joins that run (and is forwarded to `-H` hosts) |
 | `FLEET_JOBS_DIR` | [job](#jobs) state (default `${XDG_STATE_HOME:-~/.local/state}/fleet/jobs`) |
 | `FLEET_STACKS_DIR` | where [stacks](#stacks) live (default `${XDG_STATE_HOME:-~/.local/state}/fleet/stacks`) |
+| `FLEET_WORKSPACES_ROOT` | where new [workspaces](#workspaces) go (over config `workspaces.root`; default `~/fleet/workspaces`) |
 | `VISUAL`, `EDITOR` | the editor for `fleet brief --edit`, `fleet stack edit` and `fleet config edit` (default `vi`) |
 | `FLEET_SNAPSHOT` | the [session-recovery](#session-recovery) snapshot (default `${XDG_STATE_HOME:-~/.local/state}/fleet/snapshot.json`) |
 | `FLEET_BOOT_ID` | override this boot's id (tests; a different value simulates a reboot) |

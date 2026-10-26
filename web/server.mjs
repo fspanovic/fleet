@@ -7,7 +7,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { configPath, loadConfig, ensurePath, ensureUtf8Locale, resolveBinary } from './lib/config.mjs';
+import { configPath, fleetStateDir, loadConfig, ensurePath, ensureUtf8Locale, resolveBinary } from './lib/config.mjs';
 import { run } from './lib/run.mjs';
 import { createFleetCli } from './lib/fleet-cli.mjs';
 import { createFleet } from './lib/fleet.mjs';
@@ -15,7 +15,11 @@ import { createBackend } from './lib/backends.mjs';
 import { createTranscriptReader, locateTranscript } from './lib/transcript.mjs';
 import { createSpawner } from './lib/spawn.mjs';
 import { createKiller } from './lib/kill.mjs';
-import { createAutoNamer, createSpawnNamer } from './lib/autoname.mjs';
+import { createDeleter } from './lib/delete.mjs';
+import { createServerStopper } from './lib/devservers.mjs';
+import { createLeftovers } from './lib/leftovers.mjs';
+import { createAutoNamer } from './lib/autoname.mjs';
+import { createWorkspaceNamer } from './lib/workspaces.mjs';
 import { createGrouper } from './lib/grouping.mjs';
 import { createUploader } from './lib/uploads.mjs';
 import { SPEECH_KEY_NAME, createKeySource, createSpeaker, createTranscriber } from './lib/transcribe.mjs';
@@ -26,12 +30,17 @@ import { createNotes } from './lib/notes.mjs';
 import { createSpawnDirsEditor } from './lib/spawn-dirs.mjs';
 import { createRepos } from './lib/repos.mjs';
 import { createJobs } from './lib/jobs.mjs';
+import { createTasks } from './lib/tasks.mjs';
 import { createTouchedIndex } from './lib/touched.mjs';
 import { createBriefExtractor } from './lib/brief-extract.mjs';
 import { createBriefStore, createBriefs, createClaudeAsk, gitInfo } from './lib/briefs.mjs';
 import { createStacks } from './lib/stacks.mjs';
 import { fetchPeerHost } from './lib/peers.mjs';
 import { createDormant } from './lib/dormant.mjs';
+import { createTaskMentions } from './lib/mentions.mjs';
+import { TASK_LINKS_FILE, createTaskLinks } from './lib/task-links.mjs';
+import { SCRATCHPAD_FILE, createScratchpad } from './lib/scratchpad.mjs';
+import { SQUAD_COUNTER_FILE, createSquadCounter } from './lib/squad.mjs';
 import { createApi } from './lib/api.mjs';
 import { createHttpServer } from './lib/app.mjs';
 
@@ -62,17 +71,15 @@ const autoNamer = createAutoNamer({
   intervalMs: config.autoName.intervalMinutes * 60 * 1000,
   log,
 });
-// After an unnamed spawn with a first prompt: name that one session once it has replied.
-const spawnNamer = config.autoName.enabled
-  ? createSpawnNamer({
-      cli,
-      listSessions: async () => {
-        const host = await fleet.localHost({ force: true });
-        return host.ok ? host.sessions : [];
-      },
-      log,
-    })
-  : null;
+// Sessions started in a new worktree: branch and title named after the work once it has answered.
+const workspaceNamer = createWorkspaceNamer({
+  cli,
+  listSessions: async () => {
+    const host = await fleet.localHost();
+    return host.ok ? host.sessions : [];
+  },
+  log,
+});
 const uploader = createUploader({
   dir: config.uploads.dir,
   maxBytes: config.uploads.maxMB * 1024 * 1024,
@@ -135,16 +142,23 @@ const ttsKey = createKeySource({ name: SPEECH_KEY_NAME, run });
 const speechKey = async () => (await ttsKey()) ?? (await transcribeKey());
 const spawner = createSpawner({ run, tmux: config.tmux, launcher: config.claude, launchers: config.launchers });
 const operator = createOperator({ config, fleet, spawner, backend, log });
+const killer = createKiller({ run, tmux: config.tmux, closeIterm: (s) => backend.closeIterm(s) });
 const handleApi = createApi({
   config,
   fleet,
   backend,
   transcripts: createTranscriptReader(),
   spawner,
-  killer: createKiller({ run, tmux: config.tmux, closeIterm: (s) => backend.closeIterm(s) }),
+  killer,
+  // Delete also stops the dev servers started in the worktree and cleans their leftovers.
+  deleter: createDeleter({
+    run,
+    killer,
+    servers: createServerStopper({ run, tmux: config.tmux }),
+    leftovers: createLeftovers({ run, home: os.homedir(), env: process.env }),
+  }),
   cli,
   autoNamer,
-  spawnNamer,
   uploader,
   transcriber: createTranscriber({ getKey: transcribeKey, log }),
   speaker: createSpeaker({ getKey: speechKey, voice: config.operator.voice ?? undefined, log }),
@@ -158,9 +172,18 @@ const handleApi = createApi({
   repos: createRepos({ cli, configFile: config.configFile ?? configPath(process.env), self: config.self }),
   // Jobs screen: `fleet --local jobs …` (list / show / run now / enable|disable).
   jobs: createJobs({ cli, self: config.self }),
+  // My tasks: Productive, with this server's token (web.tasks.productive / $PRODUCTIVE_AUTH_TOKEN).
+  tasks: config.tasks ? createTasks({ settings: config.tasks, run, log }) : null,
   briefs,
   stacks,
   dormant,
+  // Each live session's most-mentioned task URLs, counted from its transcript in the background.
+  taskMentions: createTaskMentions({ logError }),
+  // Sessions linked to a task by hand ("Link task…"), kept in fleet's state dir.
+  taskLinks: createTaskLinks({ file: path.join(fleetStateDir(process.env), TASK_LINKS_FILE), logError }),
+  scratchpad: createScratchpad({ file: path.join(fleetStateDir(process.env), SCRATCHPAD_FILE) }),
+  // Madrid-palette spawns are named `<player> <n>`: the one counter, kept in fleet's state dir.
+  squadCounter: createSquadCounter({ file: path.join(fleetStateDir(process.env), SQUAD_COUNTER_FILE) }),
   grouper,
   name: NAME,
   version: VERSION,
@@ -186,11 +209,13 @@ server.listen(config.port, config.bind, () => {
   } else {
     log('[fleet-web] autoname off (web.autoName.enabled = false)');
   }
+  workspaceNamer.start();
   uploader.start();
   // A running operator keeps its workspace current (its ./api helper names this server's port).
   operator.prepare().catch((err) => logError(err, 'operator workspace'));
   operator.start();
   if (config.operator.clearIdleMinutes) log(`[fleet-web] operator: /clear after ${config.operator.clearIdleMinutes}m idle`);
+  log(config.tasks ? `[fleet-web] tasks: Productive (${config.tasks.keychain ? 'Keychain item' : '$PRODUCTIVE_AUTH_TOKEN'})` : '[fleet-web] tasks off (web.tasks.productive unset)');
   log(`[fleet-web] uploads ${config.uploads.dir} (max ${config.uploads.maxMB} MB, kept ${config.uploads.retentionDays || '∞'} days)`);
   if (grouper) {
     grouper.start();
@@ -236,7 +261,7 @@ function shutdown(signal) {
   shuttingDown = true;
   log(`[fleet-web] ${signal} received, shutting down`);
   autoNamer.stop();
-  spawnNamer?.stop();
+  workspaceNamer.stop();
   grouper?.stop();
   briefs.stop();
   stacks.stop();

@@ -2,6 +2,7 @@ import { KanbanIcon, ListIcon } from 'lucide-react'
 
 import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group'
 import type { ViewMode } from '@/lib/groups'
+import { SEGMENT, SEGMENTED } from '@/lib/styles'
 import { cn } from '@/lib/utils'
 
 /** List | Board. `size="lg"` on mobile (44px tap targets). */
@@ -20,8 +21,9 @@ export function ViewToggle({
   className?: string
 }) {
   const item = cn(
-    'gap-1 rounded-md px-2 text-muted-foreground data-[state=on]:bg-accent data-[state=on]:text-accent-foreground',
-    size === 'lg' ? 'h-10 min-w-11 text-sm' : 'h-7 min-w-7 text-xs',
+    'gap-1.5',
+    SEGMENT,
+    size === 'lg' ? 'h-10 min-w-11 px-3 text-sm' : 'h-7 min-w-7 px-2.5 text-xs',
   )
   return (
     <ToggleGroup
@@ -29,8 +31,8 @@ export function ViewToggle({
       value={value}
       onValueChange={(v) => v && onChange(v as ViewMode)}
       aria-label="View"
-      spacing={0}
-      className={cn('shrink-0 rounded-lg border border-border bg-card p-0.5', className)}
+      spacing={0.5}
+      className={cn(SEGMENTED, className)}
     >
       <ToggleGroupItem value="list" aria-label="List view" title="List view" className={item}>
         <ListIcon className="size-3.5" />

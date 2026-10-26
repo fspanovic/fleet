@@ -14,6 +14,7 @@ import { createFleetCli } from '../lib/fleet-cli.mjs';
 import { normalizeConfig } from '../lib/config.mjs';
 import { HttpError } from '../lib/http.mjs';
 import { ambiguityCandidates, createDormant, dormantHttpError, validateDormantRequest } from '../lib/dormant.mjs';
+import { createTranscriptReader, encodeCwd, locateRecordTranscript, piDirName } from '../lib/transcript.mjs';
 
 const SID = 'aaaaaaaa-0000-0000-0000-000000000001';
 const SID_CLOSED = 'cccccccc-0000-0000-0000-000000000002';
@@ -280,4 +281,204 @@ test('recently closed: a CLI without --closed → 501; restore.onBoot ignores cl
   const d = createDormant({ cli: createFleetCli({ run }) });
   assert.equal(await d.restoreOnBoot({ markerFile: path.join(dir, 'marker') }), null);
   assert.deepEqual(calls, [['--local', 'restore', '--json']], 'only the list — nothing restored');
+});
+
+// ------------------------------------------------------------------ read-only chat of a closed / dormant session
+
+const SID_CODEX = 'dddddddd-0000-0000-0000-000000000003';
+const SID_PI = 'eeeeeeee-0000-0000-0000-000000000004';
+const SID_NO_TRANSCRIPT = 'ffffffff-0000-0000-0000-000000000005';
+
+const claudeLine = (role, text, extra = {}) =>
+  JSON.stringify({ type: role, timestamp: '2026-10-02T10:00:00Z', message: role === 'user' ? { role, content: text } : { id: `m-${text}`, role, content: [{ type: 'text', text }], stop_reason: 'end_turn' }, ...extra });
+
+/** Temp transcript homes (Claude, Codex, pi) holding one transcript per record above, plus a secret outside them. */
+function historyHomes(t, cwd) {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'fleet-history-'));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const homes = { claude: path.join(root, 'claude'), codex: path.join(root, 'codex'), pi: path.join(root, 'pi') };
+  const write = (file, lines) => {
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    fs.writeFileSync(file, lines.join('\n') + '\n');
+  };
+  const proj = path.join(homes.claude, 'projects', encodeCwd(cwd));
+  write(path.join(proj, `${SID_CLOSED}.jsonl`), [claudeLine('user', 'first'), claudeLine('assistant', 'one'), claudeLine('user', 'second'), claudeLine('assistant', 'two')]);
+  write(path.join(proj, `${SID}.jsonl`), [claudeLine('user', 'dormant prompt'), claudeLine('assistant', 'dormant reply')]);
+  write(path.join(homes.codex, 'sessions', '2026', '10', '02', `rollout-2026-10-02T10-00-00-${SID_CODEX}.jsonl`), [
+    JSON.stringify({ type: 'session_meta', payload: { id: SID_CODEX, cwd } }),
+    JSON.stringify({ type: 'response_item', timestamp: '2026-10-02T10:00:00Z', payload: { type: 'message', role: 'user', content: [{ type: 'input_text', text: 'codex prompt' }] } }),
+    JSON.stringify({ type: 'response_item', timestamp: '2026-10-02T10:00:01Z', payload: { type: 'message', role: 'assistant', content: [{ type: 'output_text', text: 'codex reply' }] } }),
+  ]);
+  write(path.join(homes.pi, 'sessions', piDirName(cwd), `2026-10-02T10-00-00_${SID_PI}.jsonl`), [
+    JSON.stringify({ type: 'session', id: SID_PI, cwd }),
+    JSON.stringify({ type: 'message', message: { role: 'user', content: [{ type: 'text', text: 'pi prompt' }] } }),
+    JSON.stringify({ type: 'message', message: { role: 'assistant', content: [{ type: 'text', text: 'pi reply' }], stopReason: 'stop' } }),
+  ]);
+  const secret = path.join(root, 'secret.jsonl');
+  write(secret, [claudeLine('user', 'secret')]);
+  return { root, homes, secret };
+}
+
+/** `fleet restore --json` with a closed Claude, Codex and pi session, a dormant Claude one and one without a transcript. */
+function historyList(host, cwd) {
+  const one = (sessionId, title, extra = {}) => ({ sessionId, name: null, title, cwd, ...extra });
+  const closed = (s, at) => ({ kind: 'claude', target: s.sessionId, name: s.title, since: at, closedAt: at, windows: 1, panes: 1, sessions: [s] });
+  return {
+    host,
+    bootId: '7',
+    dormant: [{ kind: 'tmux', target: 'fleet-test-a', name: 'fleet-test-a', since: '2026-10-01T10:00:00Z', windows: 1, panes: 1, sessions: [one(SID, 'Fix login')] }],
+    closed: [
+      { ...closed(one(SID_CLOSED, 'Old work'), '2026-10-02T10:00:00Z'), tmuxSession: 'fleet-test-c' },
+      closed(one(SID_CODEX, 'Codex work', { harness: 'codex' }), '2026-10-02T09:00:00Z'),
+      closed(one(SID_PI, 'Pi work', { harness: 'pi' }), '2026-10-02T08:00:00Z'),
+      closed(one(SID_NO_TRANSCRIPT, 'Lost'), '2026-10-02T07:00:00Z'),
+    ],
+  };
+}
+
+async function startHistoryPair(t, { withDormant = true } = {}) {
+  const cwd = '/home/tester/Code/project';
+  const files = historyHomes(t, cwd);
+  const urls = {};
+  const handles = {};
+  const calls = {};
+  for (const name of ['laptop', 'workstation']) {
+    const server = createHttpServer({ handleApi: (req, url) => handles[name](req, url) });
+    urls[name] = await listen(server);
+    t.after(() => server.close());
+  }
+  for (const name of ['laptop', 'workstation']) {
+    calls[name] = [];
+    const run = async (bin, args) => {
+      calls[name].push(args);
+      if (args[0] === 'list') return { stdout: '[]', stderr: '' };
+      assert.deepEqual(args, ['--local', 'restore', '--json'], 'only the list is ever asked for');
+      return { stdout: JSON.stringify(historyList(name, cwd)), stderr: '' };
+    };
+    const cli = createFleetCli({ run });
+    const config = normalizeConfig({ self: name, hosts: { laptop: { web: urls.laptop }, workstation: { web: urls.workstation } } }, { env: {}, home: '/home/tester' });
+    const api = createApi({
+      config,
+      fleet: createFleet({ cli, self: name }),
+      backend: {},
+      transcripts: createTranscriptReader({ home: files.homes.claude, codexHome: files.homes.codex, piHome: files.homes.pi }),
+      spawner: {},
+      cli,
+      dormant: withDormant ? createDormant({ cli }) : null,
+      warmFleet: false,
+    });
+    t.after(() => api.stop());
+    handles[name] = api;
+  }
+  return { urls, calls, files, cwd };
+}
+
+test('closed / dormant messages: the live messages shape from the record, limit and truncated', async (t) => {
+  const { urls, cwd } = await startHistoryPair(t);
+  const base = `${urls.laptop}/api/hosts/laptop/dormant/sessions`;
+  const r = await call(`${base}/${SID_CLOSED}/messages`);
+  assert.equal(r.status, 200);
+  assert.equal(r.body.host, 'laptop');
+  assert.equal(r.body.id, SID_CLOSED);
+  assert.equal(r.body.status, 'closed');
+  assert.equal(r.body.name, 'Old work');
+  assert.equal(r.body.limit, 60);
+  assert.deepEqual(r.body.messages.map((m) => [m.role, m.text]), [['user', 'first'], ['assistant', 'one'], ['user', 'second'], ['assistant', 'two']]);
+  assert.equal(r.body.total, 4);
+  assert.equal(r.body.truncated, false);
+  assert.equal(typeof r.body.updatedAt, 'number');
+  assert.equal(typeof r.body.capturedAt, 'number');
+  assert.deepEqual(r.body.record, {
+    pool: 'closed', kind: 'claude', target: SID_CLOSED, name: 'Old work', title: 'Old work', sessionName: null, cwd,
+    harness: 'claude', since: '2026-10-02T10:00:00Z', closedAt: '2026-10-02T10:00:00Z', tmuxSession: 'fleet-test-c',
+  });
+
+  const two = await call(`${base}/${SID_CLOSED}/messages?limit=2`);
+  assert.deepEqual(two.body.messages.map((m) => m.text), ['second', 'two']);
+  assert.equal(two.body.truncated, true);
+  assert.equal(two.body.limit, 2);
+
+  // A unique prefix of ≥ 8 characters, like the live routes; a dormant session too.
+  const dormantOne = await call(`${base}/${SID.slice(0, 8)}/messages`);
+  assert.equal(dormantOne.status, 200);
+  assert.equal(dormantOne.body.id, SID);
+  assert.equal(dormantOne.body.status, 'dormant');
+  assert.equal(dormantOne.body.record.pool, 'dormant');
+  assert.equal(dormantOne.body.record.closedAt, null);
+  assert.deepEqual(dormantOne.body.messages.map((m) => m.text), ['dormant prompt', 'dormant reply']);
+});
+
+test('closed messages: Codex and pi records read from their own transcript dirs', async (t) => {
+  const { urls } = await startHistoryPair(t);
+  const base = `${urls.laptop}/api/hosts/laptop/dormant/sessions`;
+  const codex = await call(`${base}/${SID_CODEX}/messages`);
+  assert.equal(codex.status, 200);
+  assert.equal(codex.body.record.harness, 'codex');
+  assert.deepEqual(codex.body.messages.map((m) => [m.role, m.text]), [['user', 'codex prompt'], ['assistant', 'codex reply']]);
+  const pi = await call(`${base}/${SID_PI}/messages`);
+  assert.equal(pi.status, 200);
+  assert.equal(pi.body.record.harness, 'pi');
+  assert.deepEqual(pi.body.messages.map((m) => [m.role, m.text]), [['user', 'pi prompt'], ['assistant', 'pi reply']]);
+});
+
+test('closed messages: not a record → 404, no transcript → 404, bad ids → 400, POST → 405, no recovery → 501', async (t) => {
+  const { urls } = await startHistoryPair(t);
+  const base = `${urls.laptop}/api/hosts/laptop/dormant/sessions`;
+  const unknown = await call(`${base}/99999999-0000-0000-0000-000000000000/messages`);
+  assert.equal(unknown.status, 404);
+  assert.match(unknown.body.error, /not a recently closed or dormant session/);
+  assert.equal((await call(`${base}/cccccccc/messages`)).status, 200, 'a unique prefix');
+  assert.equal((await call(`${base}/ccccccc/messages`)).status, 404, 'a prefix under 8 characters is no match');
+  const lost = await call(`${base}/${SID_NO_TRANSCRIPT}/messages`);
+  assert.equal(lost.status, 404);
+  assert.match(lost.body.error, /transcript not found/);
+  assert.equal((await call(`${base}/${SID_CLOSED}/messages`, 'POST', {})).status, 405);
+  assert.equal((await call(`${urls.laptop}/api/hosts/nowhere/dormant/sessions/${SID_CLOSED}/messages`)).status, 404);
+
+  const off = await startHistoryPair(t, { withDormant: false });
+  assert.equal((await call(`${off.urls.laptop}/api/hosts/laptop/dormant/sessions/${SID_CLOSED}/messages`)).status, 501);
+});
+
+test('closed messages: path traversal in the id is refused before anything is read', async (t) => {
+  const { urls, calls } = await startHistoryPair(t);
+  const base = `${urls.laptop}/api/hosts/laptop/dormant/sessions`;
+  const before = calls.laptop.length;
+  for (const bad of ['..%2F..%2Fsecret', '%2E%2E', '..', `${SID_CLOSED}%2F..%2F..%2Fsecret`, '%2Fetc%2Fpasswd', 'a.b.c.d.e.f', '%E0%A4%A']) {
+    const r = await call(`${base}/${bad}/messages`);
+    // `..` / `%2E%2E` are dot segments: the URL parser drops them, leaving no route (404).
+    assert.equal(r.status, bad === '..' || bad === '%2E%2E' ? 404 : 400, bad);
+  }
+  assert.equal(calls.laptop.length, before, 'the record list was never fetched');
+});
+
+test('locateRecordTranscript: only inside the harness dir — a symlink out, a traversing cwd and bad ids are null', async (t) => {
+  const { homes, secret, root } = historyHomes(t, '/w/app');
+  const proj = path.join(homes.claude, 'projects', encodeCwd('/w/app'));
+  const linked = '11111111-0000-0000-0000-000000000000';
+  fs.symlinkSync(secret, path.join(proj, `${linked}.jsonl`));
+  assert.equal(await locateRecordTranscript({ sessionId: linked, cwd: '/w/app' }, homes), null, 'a symlink pointing outside');
+  const found = await locateRecordTranscript({ sessionId: SID_CLOSED, cwd: '/w/app' }, homes);
+  assert.equal(found.harness, 'claude');
+  assert.equal(found.file, fs.realpathSync(path.join(proj, `${SID_CLOSED}.jsonl`)));
+  // The id is the only part of the path a record controls besides cwd, which is encoded.
+  assert.equal(await locateRecordTranscript({ sessionId: '../secret', cwd: '/w/app' }, homes), null);
+  assert.equal(await locateRecordTranscript({ sessionId: 'secret', cwd: '../..' }, homes), null);
+  assert.equal(await locateRecordTranscript({ sessionId: 'secret', cwd: root }, homes), null);
+  // A Codex record is never looked up in Claude's dir (and the other way round).
+  assert.equal(await locateRecordTranscript({ sessionId: SID_CLOSED, cwd: '/w/app', harness: 'codex' }, homes), null);
+  assert.equal((await locateRecordTranscript({ sessionId: SID_CODEX, harness: 'codex' }, homes)).harness, 'codex');
+  assert.equal(await locateRecordTranscript({ sessionId: SID_CODEX, harness: 'claude' }, homes), null);
+  assert.equal((await locateRecordTranscript({ sessionId: SID_PI, cwd: '/elsewhere', harness: 'pi' }, homes)).harness, 'pi', 'pi: any cwd dir when its own has none');
+});
+
+test('closed messages: proxied once to the peer that has the record', async (t) => {
+  const { urls, calls } = await startHistoryPair(t);
+  const r = await call(`${urls.laptop}/api/hosts/workstation/dormant/sessions/${SID_CLOSED}/messages?limit=1`);
+  assert.equal(r.status, 200);
+  assert.equal(r.body.host, 'workstation');
+  assert.deepEqual(r.body.messages.map((m) => m.text), ['two']);
+  assert.ok(calls.workstation.some((a) => a.join(' ') === '--local restore --json'), 'the peer resolved its own record');
+  assert.ok(!calls.laptop.some((a) => a.includes('restore')), 'the proxying host read nothing');
+  // A proxied request is never proxied again.
+  assert.equal((await call(`${urls.laptop}/api/hosts/workstation/dormant/sessions/${SID_CLOSED}/messages?local=1`)).status, 404);
 });

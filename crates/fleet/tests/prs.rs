@@ -38,12 +38,13 @@ fn page(nodes: Vec<Value>) -> String {
 /// A `gh` that answers each of the four searches from a file, logs its calls, and fails
 /// while `fail` exists.
 fn fake_gh(env: &Env) -> std::path::PathBuf {
+    let mut described = pr("app", 2, "me", false, json!([]));
+    described["body"] = json!(
+        "Task: [#7](https://tracker.example.com/acme/tasks/7)\nDocs: https://docs.example.com/x, https://tracker.example.com/acme/tasks/7"
+    );
     std::fs::write(
         env.path("mine.json"),
-        page(vec![
-            pr("app", 1, "me", true, json!([])),
-            pr("app", 2, "me", false, json!([])),
-        ]),
+        page(vec![pr("app", 1, "me", true, json!([])), described]),
     )
     .unwrap();
     std::fs::write(
@@ -145,10 +146,20 @@ fn prs_json_sorts_into_columns_and_caches() {
     assert_eq!(v["prs"][0]["mention"]["author"], "ana");
     assert_eq!(v["prs"][0]["mention"]["excerpt"], "@me can you look?");
     assert_eq!(v["prs"][1]["checks"], "pending");
+    // `links`: the description's distinct URLs; none without a description.
+    assert_eq!(
+        v["prs"][2]["links"],
+        json!([
+            "https://tracker.example.com/acme/tasks/7",
+            "https://docs.example.com/x"
+        ])
+    );
+    assert_eq!(v["prs"][3]["links"], json!([]));
     assert_eq!(v["columns"].as_array().unwrap().len(), 6);
     assert_eq!(v["columns"][0]["id"], "unseenMentions");
     assert_eq!(v["columns"][1]["id"], "waitingOnMe");
     assert_eq!(v["columns"][1]["count"], 1);
+    assert!(v.get("merged").is_none(), "{v}");
     assert_eq!(calls(&env), 4);
 
     // Fresh cache: no fetch.

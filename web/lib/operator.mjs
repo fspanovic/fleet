@@ -58,7 +58,8 @@ misheard names; match them to real sessions), and **your final reply is read alo
 ## Seeing the fleet
 
 - \`fleet list --all-hosts --json\` — every session: \`host\`, \`session_id\`, \`display_title\`, \`cwd\`,
-  \`status\` (busy | idle | waiting | unknown), \`waiting_for\` (what a waiting session needs),
+  \`status\` (busy | idle | waiting | shell | unknown — shell: idle with a background task running),
+  \`waiting_for\` (what a waiting session needs),
   \`updated_at\` (ms), \`tmux_session\`, \`context\`. Pipe through \`jq\` to keep it small.
 - \`./api GET '/hosts/<host>/sessions/<id>/messages?limit=12'\` — a session's recent conversation
   (no tool calls). A pending AskUserQuestion is a message with \`kind: "question"\` and \`id\`.
@@ -72,7 +73,11 @@ misheard names; match them to real sessions), and **your final reply is read alo
 - Reply to a session: \`./api POST /hosts/<host>/sessions/<id>/send '{"text":"..."}'\`
 - Answer its question: \`./api POST /hosts/<host>/sessions/<id>/answer '{"toolUseId":"<id>","answers":[{"options":[0]}]}'\`
   (one entry per question; option indexes from 0, or \`"text"\` for a free answer).
-- Keys: \`./api POST /hosts/<host>/sessions/<id>/keys '{"key":"Escape"}'\` (interrupt), Enter, Up, Down.
+- Keys: \`./api POST /hosts/<host>/sessions/<id>/keys '{"key":"Escape"}'\` (interrupt), Enter, Up, Down,
+  Left, Right, Tab, BTab (Shift+Tab), Space, BSpace, Home, End, PageUp, PageDown.
+- A session waiting on "dialog open" shows one of Claude's menus (/mcp, /model, /config…): \`send\`
+  is refused (409). Peek it, then drive it with keys and \`/type '{"text":"..."}'\` (typed, no
+  Enter), or close it with Escape.
 - Close a session: \`./api POST /hosts/<host>/sessions/<id>/kill '{}'\`.
   Close a stale tmux shell: \`fleet -H <host> tmux kill <name> -f\`.
 - Start one: \`./api POST /hosts/<host>/spawn '{"dir":"<abs dir>","prompt":"..."}'\`.
@@ -166,6 +171,8 @@ export function createOperator({ config, fleet, spawner, backend = null, now = D
     const idleMs = config.operator.clearIdleMinutes * 60 * 1000;
     if (!backend || !idleMs) return null;
     const s = await find({ force: true });
+    // Plain `idle` only: a `shell` operator (idle with a background task — a Monitor, a background
+    // Bash — still running) is live work, and /clear would drop it.
     if (!s || s.status !== 'idle' || !s.updated_at || !s.context?.used) return null;
     if (now() - s.updated_at < idleMs) return null;
     await backend.send(s, CLEAR_COMMAND);

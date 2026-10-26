@@ -4,6 +4,7 @@ import type { Session } from '@/api/types'
 import { useStackLabel } from '@/hooks/useStackLabels'
 import { openStackSheet } from '@/hooks/useStackUi'
 import { stackHome } from '@/lib/stacks'
+import { CHIP } from '@/lib/styles'
 import { cn } from '@/lib/utils'
 
 /**
@@ -29,8 +30,9 @@ export function StackChip({ session: s, className }: { session: Session; classNa
       onPointerDown={(e) => e.stopPropagation()}
       onTouchStart={(e) => e.stopPropagation()}
       className={cn(
-        'relative inline-flex h-4.5 max-w-[45%] min-w-0 shrink items-center gap-1 rounded-[5px] border border-primary/30 bg-primary/5 px-1 text-[0.6875rem] text-primary',
-        'outline-none after:absolute after:-inset-1.5 hover:bg-primary/10 focus-visible:ring-2 focus-visible:ring-ring/50',
+        CHIP,
+        'relative max-w-[45%] min-w-0 shrink bg-primary/10 text-[color-mix(in_oklab,var(--color-primary),var(--color-foreground)_30%)]',
+        'outline-none after:absolute after:-inset-1.5 hover:bg-primary/16 focus-visible:ring-2 focus-visible:ring-ring/50',
         className,
       )}
     >

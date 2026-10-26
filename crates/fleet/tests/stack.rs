@@ -461,10 +461,13 @@ fn spawn_under_dry_run_prints_the_launch_and_writes_nothing() {
     assert!(out.status.success(), "{}", stderr(&out));
     let text = stdout(&out);
     assert!(text.contains("would create stack"), "{text}");
-    assert!(
-        text.contains(&format!("cd '{}' && claude \"$(cat '", t.cwd())),
-        "{text}"
-    );
+    // No --name: a word from the list, passed as `claude -n`.
+    let word = text
+        .split_once(&format!("cd '{}' && claude -n '", t.cwd()))
+        .and_then(|(_, rest)| rest.split_once("' \"$(cat '"))
+        .map(|(w, _)| w)
+        .unwrap_or_default();
+    assert!(fleet::core::words::WORDS.contains(&word), "{text}");
     assert!(text.contains("-stack-"), "{text}");
     assert!(
         text.contains("You're running in the session stack with shared context: ")

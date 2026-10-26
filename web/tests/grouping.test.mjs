@@ -288,12 +288,16 @@ test('fleet-cli groupEdit: flags as --k=v, the CLI error surfaces as refused', a
   await cli.groupEdit({ op: 'move', host: 'laptop', session: 'a1', label: 'New One' });
   await cli.groupEdit({ op: 'create', label: 'Spikes' });
   await cli.groupEdit({ op: 'delete', id: 'g-3' });
+  await cli.groupEdit({ op: 'default', id: 'g-1' });
+  await cli.groupEdit({ op: 'default', id: null });
   assert.deepEqual(seen, [
     ['group', '--rename=g-1', '--label=-dash', '--json'],
     ['group', '--move=laptop/a1', '--to=g-2', '--json'],
     ['group', '--move=laptop/a1', '--label=New One', '--json'],
     ['group', '--create', '--label=Spikes', '--json'],
     ['group', '--delete=g-3', '--json'],
+    ['group', '--set-default=g-1', '--json'],
+    ['group', '--clear-default', '--json'],
   ]);
   const failing = createFleetCli({
     run: async () => {
@@ -309,6 +313,9 @@ test('groupEditOp validates the body', () => {
   assert.deepEqual(groupEditOp({ op: 'move', host: 'laptop', session: '123', label: 'New' }), { op: 'move', host: 'laptop', session: '123', label: 'New' });
   assert.deepEqual(groupEditOp({ op: 'create', label: ' Spikes ', id: 'ignored' }), { op: 'create', label: 'Spikes' });
   assert.deepEqual(groupEditOp({ op: 'delete', id: 'g-3' }), { op: 'delete', id: 'g-3' });
+  assert.deepEqual(groupEditOp({ op: 'default', id: 'g-3' }), { op: 'default', id: 'g-3' });
+  assert.deepEqual(groupEditOp({ op: 'default', id: null }), { op: 'default', id: null });
+  assert.deepEqual(groupEditOp({ op: 'default' }), { op: 'default', id: null });
   for (const bad of [
     null,
     { op: 'nuke' },
@@ -318,6 +325,7 @@ test('groupEditOp validates the body', () => {
     { op: 'move', host: 'laptop', session: '../x', to: 'g-1' },
     { op: 'move', host: 'laptop', session: 'a1' },
     { op: 'create' },
+    { op: 'default', id: 'g 1' },
     { op: 'delete', id: '' },
   ]) {
     assert.throws(() => groupEditOp(bad), (e) => e.status === 400, JSON.stringify(bad));
@@ -343,4 +351,17 @@ test('grouper: a member\'s `dormant: true` passes through to /api/groups (only w
   const g = createGrouper({ cli, getFleet: async () => FLEET, self: 'laptop', intervalMs: 600000 });
   await g.loadCached();
   assert.deepEqual(g.response().groups[0].members, [{ host: 'laptop', id: 'a1', dormant: true }, { host: 'laptop', id: 'a2' }, { host: 'laptop', id: 'a3' }]);
+});
+
+test('grouper: the response carries the report\'s default group (null when none)', async () => {
+  const cli = {
+    groupRun: async () => ({}),
+    groupCached: async () => ({ ...report([BOARD]), defaultGroup: 'g-1' }),
+    groupEdit: async () => report([BOARD]),
+  };
+  const g = createGrouper({ cli, getFleet: async () => FLEET });
+  await g.loadCached();
+  assert.equal(g.response().defaultGroup, 'g-1');
+  const r = await g.edit({ op: 'default', id: null });
+  assert.equal(r.defaultGroup, null);
 });

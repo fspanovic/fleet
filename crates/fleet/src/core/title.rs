@@ -191,7 +191,7 @@ pub fn plan_tmux(
 
 // --- adopting a hand-picked tmux name ---------------------------------------
 
-/// A tmux session name nobody chose: the web spawner's `fw-hhmmss`, tmux's
+/// A tmux session name nobody chose: the web spawner's old `fw-hhmmss`, tmux's
 /// numeric default, or Claude's `<cwd>-9d` style.
 pub fn is_generic_tmux_name(name: &str, cwd: Option<&str>) -> bool {
     if name.is_empty() {
@@ -562,8 +562,9 @@ mod tests {
             }
             other => panic!("a waiting session must not be typed into: {other:?}"),
         }
-        // Busy is fine: Claude runs `/rename` mid-turn without disturbing it.
-        for status in ["busy", "idle", "unknown"] {
+        // Busy is fine: Claude runs `/rename` mid-turn without disturbing it. So is
+        // `shell`: idle at the prompt, a background task running behind it.
+        for status in ["busy", "idle", "shell", "unknown"] {
             s.status = status.into();
             assert_eq!(hold(&s), None, "{status}");
         }

@@ -113,8 +113,9 @@ function fakeHost(self, { dir }) {
     spawn: async (req) => {
       calls.push({ spawn: req });
       n += 1;
-      sessions.push({ session_id: `cccccccc-0000-0000-0000-00000000000${n}`, name: req.name, status: 'busy', backend: 'tmux', handle: `%${n + 10}`, tmux_session: req.name, cwd: req.dir, updated_at: 2, stack: null });
-      return { name: req.name, dir: req.dir, tmuxSession: req.name, command: 'claude', trusted: false, model: req.model || null };
+      const name = req.name ?? `kelpie-${n}`; // unnamed: the real spawner picks a free word
+      sessions.push({ session_id: `cccccccc-0000-0000-0000-00000000000${n}`, name, status: 'busy', backend: 'tmux', handle: `%${n + 10}`, tmux_session: name, cwd: req.dir, updated_at: 2, stack: null });
+      return { name, dir: req.dir, tmuxSession: name, command: 'claude', trusted: false, model: req.model || null };
     },
   };
   const killer = { kill: async () => ({ process: 'terminated', terminal: 'tmux-session-killed' }) };
@@ -146,11 +147,11 @@ function tempTree(t) {
   return { base, cwd };
 }
 
-function solo(t, { autoName = false, spawnNamer = null } = {}) {
+function solo(t, { autoName = false } = {}) {
   const { base, cwd } = tempTree(t);
   const host = fakeHost('laptop', { dir: cwd });
   const config = normalizeConfig({ self: 'laptop', spawnDirs: [{ path: path.join(base, 'other') }], web: { autoName: { enabled: autoName } } }, { env: {}, home: '/home/tester' });
-  const api = createApi({ config, ...host, spawnNamer, warmFleet: false });
+  const api = createApi({ config, ...host, warmFleet: false });
   const call = async (method, pathname, body) => {
     const req = Object.assign(new PassThrough(), { method, headers: {} });
     req.end(body == null ? '' : JSON.stringify(body));
@@ -535,14 +536,13 @@ test('spawn from a stack: no ensure, dir = the stack absCwd, unknown stack → 4
   assert.match(gone.body.error, /not a directory/);
 });
 
-test('sibling spawn keeps the spawn-namer parity: unnamed + a prompt + auto-naming on → scheduled', async (t) => {
-  const scheduled = [];
-  const { call, host } = solo(t, { autoName: true, spawnNamer: { schedule: async (tmux) => void scheduled.push(tmux) } });
+test('an unnamed sibling spawn leaves the name to the spawner (no naming pass, even with auto-naming on)', async (t) => {
+  const { call, host } = solo(t, { autoName: true });
   const r = await call('POST', `/api/hosts/laptop/sessions/${SRC_ID}/stack/spawn`, { prompt: 'go' });
-  assert.deepEqual(scheduled, [r.body.spawn.tmuxSession]);
-  assert.equal(host.calls.find((c) => c.spawn).spawn.nameGiven, false);
-  await call('POST', `/api/hosts/laptop/sessions/${SRC_ID}/stack/spawn`, {}); // only the context line: nothing to name from
-  assert.equal(scheduled.length, 1);
+  const req = host.calls.find((c) => c.spawn).spawn;
+  assert.equal(req.nameGiven, false);
+  assert.equal(req.name, null);
+  assert.equal(r.body.spawn.tmuxSession, 'kelpie-1');
 });
 
 test('kill runs `stack sync` afterwards; a failing sync never fails the kill', async (t) => {

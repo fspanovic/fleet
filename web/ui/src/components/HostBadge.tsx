@@ -5,7 +5,7 @@ export function HostBadge({ host, className }: { host: string; className?: strin
   return (
     <span
       className={cn(
-        'inline-flex h-5 shrink-0 items-center rounded-md border px-1.5 text-[0.6875rem] font-semibold tracking-wide whitespace-nowrap',
+        'inline-flex h-5 shrink-0 items-center rounded-full px-2 text-2xs font-semibold tracking-wide whitespace-nowrap',
         hostBadgeClass(host),
         className,
       )}

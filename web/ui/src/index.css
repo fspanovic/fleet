@@ -6,9 +6,75 @@
 @custom-variant dark (&:is(.dark *));
 
 @theme inline {
-  --font-sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, system-ui, sans-serif;
-  --font-heading: var(--font-sans);
-  --font-mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  /* Type: the platform's own UI face (SF Pro on Apple, Segoe UI Variable on Windows), no web font. */
+  --font-sans: -apple-system, BlinkMacSystemFont, "SF Pro Text", "SF Pro", system-ui, "Segoe UI Variable Text", "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif, "Apple Color Emoji", "Segoe UI Emoji";
+  --font-heading: -apple-system, BlinkMacSystemFont, "SF Pro Display", "SF Pro", system-ui, "Segoe UI Variable Display", "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  --font-mono: ui-monospace, "SF Mono", SFMono-Regular, Menlo, "Cascadia Mono", Consolas, monospace;
+
+  /* The type scale: Tailwind's xs (12) / sm (14) / base (16) … plus the in-between steps the UI uses
+     (in rem, so the Settings text size scales them): 3xs 10 · 2xs 11 · body-sm 13 · md 15. */
+  --text-3xs: 0.625rem;
+  --text-3xs--line-height: 0.875rem;
+  --text-2xs: 0.6875rem;
+  --text-2xs--line-height: 1rem;
+  --text-body-sm: 0.8125rem;
+  --text-body-sm--line-height: 1.25rem;
+  --text-md: 0.9375rem;
+  --text-md--line-height: 1.375rem;
+  --tracking-heading: -0.012em;
+  --tracking-display: -0.022em;
+
+  /* Motion: one set of durations and curves. `transition-*` utilities default to the standard pair. */
+  --default-transition-duration: var(--dur-base);
+  --default-transition-timing-function: var(--ease-standard);
+  --ease-standard: cubic-bezier(0.2, 0, 0, 1);
+  --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
+  --ease-in: cubic-bezier(0.4, 0, 1, 1);
+  --ease-spring: cubic-bezier(0.34, 1.36, 0.64, 1);
+  --animate-enter: fleet-enter var(--dur-slow) var(--ease-out) backwards;
+  --animate-fade: fleet-fade var(--dur-base) var(--ease-standard) backwards;
+  --animate-shimmer: fleet-shimmer 1.6s linear infinite;
+
+  /* Elevation: soft, layered shadows tinted by the palette (--shadow-tint, below) instead of hard borders. */
+  --shadow-xs: 0 1px 1px 0 var(--shadow-tint-1);
+  --shadow-sm: 0 1px 2px 0 var(--shadow-tint-1), 0 1px 3px 0 var(--shadow-tint-1);
+  --shadow: 0 1px 2px 0 var(--shadow-tint-1), 0 2px 6px -1px var(--shadow-tint-1);
+  --shadow-md: 0 2px 4px -1px var(--shadow-tint-1), 0 6px 14px -4px var(--shadow-tint-2);
+  --shadow-lg: 0 4px 8px -2px var(--shadow-tint-1), 0 14px 28px -8px var(--shadow-tint-2);
+  --shadow-xl: 0 8px 16px -4px var(--shadow-tint-1), 0 24px 48px -12px var(--shadow-tint-3);
+  --shadow-2xl: 0 12px 24px -6px var(--shadow-tint-2), 0 36px 72px -16px var(--shadow-tint-3);
+  /* A card at rest: a hairline ring + a whisper of shadow (+ the top highlight in dark). */
+  --shadow-card: 0 0 0 1px var(--hairline), 0 1px 2px 0 var(--shadow-tint-1), inset 0 1px 0 0 var(--highlight);
+  /* A card under the pointer / selected: a little more lift. */
+  --shadow-raised: 0 0 0 1px var(--hairline-strong), 0 2px 4px -1px var(--shadow-tint-1), 0 8px 18px -6px var(--shadow-tint-2), inset 0 1px 0 0 var(--highlight);
+  /* Floating layers: popovers, menus, dialogs, toasts. */
+  --shadow-overlay: 0 0 0 1px var(--hairline-strong), 0 4px 10px -2px var(--shadow-tint-1), 0 18px 42px -10px var(--shadow-tint-3), inset 0 1px 0 0 var(--highlight);
+  /* A board card floating on its lane: no outline, a soft layered shadow (dark adds a whisper of an edge, --edge). */
+  --shadow-float: 0 0 0 1px var(--edge), 0 1px 2px 0 var(--shadow-tint-1), 0 4px 14px -4px var(--shadow-tint-2), inset 0 1px 0 0 var(--highlight);
+  --shadow-float-hover: 0 0 0 1px var(--edge), 0 2px 4px -1px var(--shadow-tint-1), 0 8px 16px -6px var(--shadow-tint-3), inset 0 1px 0 0 var(--highlight);
+  /* A floating bar (the composer, the toolbar pill): lifted off the page. */
+  --shadow-dock: 0 0 0 1px var(--edge-strong), 0 2px 6px -2px var(--shadow-tint-1), 0 12px 32px -12px var(--shadow-tint-3), inset 0 1px 0 0 var(--highlight);
+  /* The content pane on the desktop frame. */
+  --shadow-pane: 0 0 0 1px var(--edge-strong), 0 1px 3px 0 var(--shadow-tint-1), 0 10px 30px -14px var(--shadow-tint-2);
+
+  --color-panel: var(--panel);
+  --color-frame: var(--frame);
+  --color-lifted: var(--lifted);
+  --color-hairline: var(--hairline);
+  /* Soft fills (chips, quiet buttons, fields, hover / selected rows): the ink at a low strength, so they
+     read on any surface — page, panel, card, a washed header — in every palette. */
+  --color-fill: var(--fill);
+  --color-fill-strong: var(--fill-strong);
+  --color-fill-hover: var(--fill-hover);
+  /* The chosen segment of a segmented control. */
+  --color-seg: var(--seg);
+  /* A card floating on a lane (board cards, PR / task cards): a step above the lane in either mode. */
+  --color-float: var(--float);
+  /* Session cards (list rows, board cards): their own surface, a hover step, and a hairline edge at >= 1.5:1 against
+     what they sit on (frame / page). */
+  --color-session: var(--session);
+  --color-session-hover: var(--session-hover);
+  --color-session-edge: var(--session-edge);
 
   --color-ring: var(--ring);
   --color-input: var(--input);
@@ -25,7 +91,8 @@
   --color-popover-foreground: var(--popover-foreground);
   --color-popover: var(--popover);
   --color-card-foreground: var(--card-foreground);
-  --color-card: var(--card);
+  /* Cards render on --surface (derived below): a step above the page in either mode. */
+  --color-card: var(--surface);
   --color-foreground: var(--foreground);
   --color-background: var(--background);
   --color-dimmer: var(--dimmer);
@@ -65,16 +132,16 @@
   --popover-foreground: #16181c;
   --primary: #2563eb;
   --primary-foreground: #ffffff;
-  --secondary: #eceef2;
+  --secondary: #eff1f4;
   --secondary-foreground: #16181c;
-  --muted: #eceef2;
+  --muted: #eff1f4;
   --muted-foreground: #5b6470;
   --dimmer: #7b8490;
-  --accent: #e3ebf8;
+  --accent: #e6eefb;
   --accent-foreground: #16181c;
   --destructive: #dc2626;
-  --border: #e1e4e9;
-  --input: #d6dae0;
+  --border: #e4e7ec;
+  --input: #d9dde3;
   --ring: #93b4e8;
   --terminal: rgb(0 0 0 / 0.03);
   --radius: 0.75rem;
@@ -97,19 +164,19 @@
   --foreground: #e9ecef;
   --card: #131519;
   --card-foreground: #e9ecef;
-  --popover: #1a1d23;
+  --popover: #1b1e24;
   --popover-foreground: #e9ecef;
   --primary: #6aa6ff;
   --primary-foreground: #0b0c0e;
-  --secondary: #1a1d23;
+  --secondary: #1b1e24;
   --secondary-foreground: #e9ecef;
-  --muted: #1a1d23;
+  --muted: #1b1e24;
   --muted-foreground: #99a1ac;
   --dimmer: #6b7480;
-  --accent: #23303f;
+  --accent: #1f2c3c;
   --accent-foreground: #ffffff;
   --destructive: #ff6b6b;
-  --border: #24282f;
+  --border: #23272e;
   --input: #2a2f37;
   --ring: #37506e;
   --terminal: rgb(0 0 0 / 0.4);
@@ -129,8 +196,11 @@
 /* Palettes (Settings → Theme, lib/palettes.ts): `data-palette` on <html>, orthogonal to light/dark.
    No attribute = the default tokens above. Each palette overrides every token for both modes:
    light is `:root[data-palette=…]` (0,2,0 — it beats plain `.dark`, which is why the palette's
-   dark variant is `:root[data-palette=…].dark`, 0,3,0). Keep lib/palettes.ts THEME_COLORS / swatches in
-   sync (palettes.test.ts checks them against this file). */
+   dark variant is `:root[data-palette=…].dark`, 0,3,0). Keep lib/palettes.ts swatches and the index.html
+   pre-paint colours in sync (palettes.test.ts checks them against this file, plus contrast floors:
+   text on background / card, status and host colours, primary-foreground on primary).
+   Editor themes use their official colours; text tokens are nudged in lightness where an official
+   colour falls below the floor (e.g. Solarized blue on base3). */
 
 /* Earth: warm paper / espresso, terracotta primary, olive-leaning status greens. */
 :root[data-palette="earth"] {
@@ -270,6 +340,2992 @@
   --host-3: #f2a7c3;
 }
 
+/* Forest: green-tinted paper / deep pine, moss primary. */
+:root[data-palette="forest"] {
+  --background: #f4f7f1;
+  --foreground: #18231a;
+  --card: #eaf0e6;
+  --card-foreground: #18231a;
+  --popover: #fbfcf9;
+  --popover-foreground: #18231a;
+  --primary: #2f6b3f;
+  --primary-foreground: #ffffff;
+  --secondary: #e3e6e0;
+  --secondary-foreground: #18231a;
+  --muted: #e3e6e0;
+  --muted-foreground: #525b52;
+  --dimmer: #7c847c;
+  --accent: #dae4d8;
+  --accent-foreground: #18231a;
+  --destructive: #b4271f;
+  --border: #dbdfd9;
+  --input: #cfd3cd;
+  --ring: #91af94;
+  --terminal: #eef1eb;
+
+  --status-waiting: #9a5b00;
+  --status-busy: #2c7a1f;
+  --status-idle: #56665a;
+  --status-unknown: #899489;
+  --status-error: #b4271f;
+
+  --host-0: #6b4fa8;
+  --host-1: #8a5a00;
+  --host-2: #1d6d80;
+  --host-3: #a83a5f;
+}
+
+:root[data-palette="forest"].dark {
+  --background: #0f1511;
+  --foreground: #dde8dc;
+  --card: #151d17;
+  --card-foreground: #dde8dc;
+  --popover: #1e2420;
+  --popover-foreground: #dde8dc;
+  --primary: #86c99a;
+  --primary-foreground: #0f1511;
+  --secondary: #1e2420;
+  --secondary-foreground: #dde8dc;
+  --muted: #1e2420;
+  --muted-foreground: #98a198;
+  --dimmer: #6d756d;
+  --accent: #243429;
+  --accent-foreground: #dde8dc;
+  --destructive: #f07a6a;
+  --border: #252c27;
+  --input: #2e352f;
+  --ring: #405f49;
+  --terminal: #050806;
+
+  --status-waiting: #e3ab45;
+  --status-busy: #9ad66f;
+  --status-idle: #8fa293;
+  --status-unknown: #5b6a5e;
+  --status-error: #f07a6a;
+
+  --host-0: #c6b3f0;
+  --host-1: #efcf8e;
+  --host-2: #93d3dd;
+  --host-3: #efa9c0;
+}
+
+/* Ocean: cool sea-glass paper / deep navy, teal-blue primary. */
+:root[data-palette="ocean"] {
+  --background: #f3f8fa;
+  --foreground: #0f2230;
+  --card: #e7f0f4;
+  --card-foreground: #0f2230;
+  --popover: #fafcfd;
+  --popover-foreground: #0f2230;
+  --primary: #0a6a8a;
+  --primary-foreground: #ffffff;
+  --secondary: #e1e7ea;
+  --secondary-foreground: #0f2230;
+  --muted: #e1e7ea;
+  --muted-foreground: #4c5b67;
+  --dimmer: #77848e;
+  --accent: #d7e5eb;
+  --accent-foreground: #0f2230;
+  --destructive: #c22a2a;
+  --border: #d9e0e4;
+  --input: #cdd4d9;
+  --ring: #88afc2;
+  --terminal: #edf2f4;
+
+  --status-waiting: #9e5c00;
+  --status-busy: #107c3c;
+  --status-idle: #4f6577;
+  --status-unknown: #83929f;
+  --status-error: #c22a2a;
+
+  --host-0: #5b4fc2;
+  --host-1: #97590a;
+  --host-2: #0d7a6c;
+  --host-3: #b2386d;
+}
+
+:root[data-palette="ocean"].dark {
+  --background: #0a1620;
+  --foreground: #dbe9f0;
+  --card: #0f1e2a;
+  --card-foreground: #dbe9f0;
+  --popover: #192630;
+  --popover-foreground: #dbe9f0;
+  --primary: #5cc6e0;
+  --primary-foreground: #0a1620;
+  --secondary: #192630;
+  --secondary-foreground: #dbe9f0;
+  --muted: #192630;
+  --muted-foreground: #95a3ab;
+  --dimmer: #697780;
+  --accent: #193441;
+  --accent-foreground: #dbe9f0;
+  --destructive: #ff7a7a;
+  --border: #202d37;
+  --input: #293640;
+  --ring: #2d5e6f;
+  --terminal: #03090f;
+
+  --status-waiting: #f2b04a;
+  --status-busy: #4fd18a;
+  --status-idle: #7f98ad;
+  --status-unknown: #506373;
+  --status-error: #ff7a7a;
+
+  --host-0: #b6b0ff;
+  --host-1: #ffd08a;
+  --host-2: #7fe0cc;
+  --host-3: #f3a6c6;
+}
+
+/* Sand: khaki paper / dusk dunes, deep teal primary. */
+:root[data-palette="sand"] {
+  --background: #faf6ec;
+  --foreground: #2e2a20;
+  --card: #f2ecdc;
+  --card-foreground: #2e2a20;
+  --popover: #fdfbf7;
+  --popover-foreground: #2e2a20;
+  --primary: #2a6b6e;
+  --primary-foreground: #ffffff;
+  --secondary: #eae6dc;
+  --secondary-foreground: #2e2a20;
+  --muted: #eae6dc;
+  --muted-foreground: #656156;
+  --dimmer: #837f75;
+  --accent: #dfe3db;
+  --accent-foreground: #2e2a20;
+  --destructive: #b42d1e;
+  --border: #e3dfd5;
+  --input: #d8d4ca;
+  --ring: #93afab;
+  --terminal: #f4f0e6;
+
+  --status-waiting: #9a5f00;
+  --status-busy: #3d781c;
+  --status-idle: #6a6455;
+  --status-unknown: #968f7e;
+  --status-error: #b42d1e;
+
+  --host-0: #76489f;
+  --host-1: #955000;
+  --host-2: #1f6680;
+  --host-3: #a8395a;
+}
+
+:root[data-palette="sand"].dark {
+  --background: #1a1813;
+  --foreground: #ebe4d2;
+  --card: #221f18;
+  --card-foreground: #ebe4d2;
+  --popover: #292721;
+  --popover-foreground: #ebe4d2;
+  --primary: #72c2bd;
+  --primary-foreground: #1a1813;
+  --secondary: #292721;
+  --secondary-foreground: #ebe4d2;
+  --muted: #292721;
+  --muted-foreground: #a5a092;
+  --dimmer: #7a756a;
+  --accent: #2c3530;
+  --accent-foreground: #ebe4d2;
+  --destructive: #ef8068;
+  --border: #312e28;
+  --input: #3a3730;
+  --ring: #425e59;
+  --terminal: #0c0a07;
+
+  --status-waiting: #e8b04c;
+  --status-busy: #a3c96b;
+  --status-idle: #a69d89;
+  --status-unknown: #6c6656;
+  --status-error: #ef8068;
+
+  --host-0: #cdb4ee;
+  --host-1: #f2cf8c;
+  --host-2: #9ccfe0;
+  --host-3: #eeaabd;
+}
+
+/* Rose: blush paper / plum night, rose primary (error leans orange-red to stay apart). */
+:root[data-palette="rose"] {
+  --background: #fdf7f8;
+  --foreground: #2a1a20;
+  --card: #f7ecef;
+  --card-foreground: #2a1a20;
+  --popover: #fefcfc;
+  --popover-foreground: #2a1a20;
+  --primary: #ad2f5a;
+  --primary-foreground: #ffffff;
+  --secondary: #ede5e7;
+  --secondary-foreground: #2a1a20;
+  --muted: #ede5e7;
+  --muted-foreground: #635459;
+  --dimmer: #8c7f83;
+  --accent: #f5dde2;
+  --accent-foreground: #2a1a20;
+  --destructive: #c0360f;
+  --border: #e6dee0;
+  --input: #dad2d4;
+  --ring: #db96a6;
+  --terminal: #f7f1f2;
+
+  --status-waiting: #a35a00;
+  --status-busy: #2a7a3a;
+  --status-idle: #6a5a63;
+  --status-unknown: #9c8d94;
+  --status-error: #c0360f;
+
+  --host-0: #6a4bbf;
+  --host-1: #8f5a00;
+  --host-2: #167384;
+  --host-3: #9a3fa0;
+}
+
+:root[data-palette="rose"].dark {
+  --background: #1a1215;
+  --foreground: #f0e2e7;
+  --card: #22181c;
+  --card-foreground: #f0e2e7;
+  --popover: #2a2124;
+  --popover-foreground: #f0e2e7;
+  --primary: #f28bab;
+  --primary-foreground: #1a1215;
+  --secondary: #2a2124;
+  --secondary-foreground: #f0e2e7;
+  --muted: #2a2124;
+  --muted-foreground: #a99ca1;
+  --dimmer: #7c7175;
+  --accent: #3f272f;
+  --accent-foreground: #f0e2e7;
+  --destructive: #ff8a5c;
+  --border: #31282b;
+  --input: #3b3135;
+  --ring: #724453;
+  --terminal: #0c0708;
+
+  --status-waiting: #f0ad4a;
+  --status-busy: #7fd393;
+  --status-idle: #a6929b;
+  --status-unknown: #6e5d65;
+  --status-error: #ff8a5c;
+
+  --host-0: #bfb2ff;
+  --host-1: #f3d08a;
+  --host-2: #8fd8e0;
+  --host-3: #e3a6f0;
+}
+
+/* Mono: neutral greys, ink / chalk primary; colour only where it means something. */
+:root[data-palette="mono"] {
+  --background: #fafafa;
+  --foreground: #171717;
+  --card: #f2f2f2;
+  --card-foreground: #171717;
+  --popover: #fdfdfd;
+  --popover-foreground: #171717;
+  --primary: #262626;
+  --primary-foreground: #fafafa;
+  --secondary: #e8e8e8;
+  --secondary-foreground: #171717;
+  --muted: #e8e8e8;
+  --muted-foreground: #525252;
+  --dimmer: #7f7f7f;
+  --accent: #ebebeb;
+  --accent-foreground: #171717;
+  --destructive: #b8282a;
+  --border: #e0e0e0;
+  --input: #d3d3d3;
+  --ring: #a3a3a3;
+  --terminal: #f3f3f3;
+
+  --status-waiting: #9a5b00;
+  --status-busy: #2b7a3d;
+  --status-idle: #5f6368;
+  --status-unknown: #949494;
+  --status-error: #b8282a;
+
+  --host-0: #5e5aa8;
+  --host-1: #86601e;
+  --host-2: #2f6f78;
+  --host-3: #9a4a68;
+}
+
+:root[data-palette="mono"].dark {
+  --background: #0f0f0f;
+  --foreground: #ededed;
+  --card: #171717;
+  --card-foreground: #ededed;
+  --popover: #1f1f1f;
+  --popover-foreground: #ededed;
+  --primary: #e5e5e5;
+  --primary-foreground: #0f0f0f;
+  --secondary: #1f1f1f;
+  --secondary-foreground: #ededed;
+  --muted: #1f1f1f;
+  --muted-foreground: #a2a2a2;
+  --dimmer: #747474;
+  --accent: #262626;
+  --accent-foreground: #ededed;
+  --destructive: #ef7a74;
+  --border: #262626;
+  --input: #303030;
+  --ring: #5c5c5c;
+  --terminal: #050505;
+
+  --status-waiting: #e0a748;
+  --status-busy: #79c48a;
+  --status-idle: #9a9ea4;
+  --status-unknown: #5e5e5e;
+  --status-error: #ef7a74;
+
+  --host-0: #b9b6ea;
+  --host-1: #e4cc9c;
+  --host-2: #9ccdd2;
+  --host-3: #e2b0c2;
+}
+
+/* High contrast: pure black / white, every text token at 7:1 or more (WCAG AAA). */
+:root[data-palette="high-contrast"] {
+  --background: #ffffff;
+  --foreground: #000000;
+  --card: #f2f2f2;
+  --card-foreground: #000000;
+  --popover: #ffffff;
+  --popover-foreground: #000000;
+  --primary: #0039b3;
+  --primary-foreground: #ffffff;
+  --secondary: #e8e8e8;
+  --secondary-foreground: #000000;
+  --muted: #e8e8e8;
+  --muted-foreground: #262626;
+  --dimmer: #3d3d3d;
+  --accent: #dde6f8;
+  --accent-foreground: #000000;
+  --destructive: #a80000;
+  --border: #6b6b6b;
+  --input: #4d4d4d;
+  --ring: #0039b3;
+  --terminal: #f7f7f7;
+
+  --status-waiting: #7a3f00;
+  --status-busy: #005c24;
+  --status-idle: #2b3a52;
+  --status-unknown: #545454;
+  --status-error: #a80000;
+
+  --host-0: #4a1fa8;
+  --host-1: #6b4200;
+  --host-2: #00566b;
+  --host-3: #8c0a4a;
+}
+
+:root[data-palette="high-contrast"].dark {
+  --background: #000000;
+  --foreground: #ffffff;
+  --card: #0d0d0d;
+  --card-foreground: #ffffff;
+  --popover: #141414;
+  --popover-foreground: #ffffff;
+  --primary: #8cc8ff;
+  --primary-foreground: #000000;
+  --secondary: #141414;
+  --secondary-foreground: #ffffff;
+  --muted: #141414;
+  --muted-foreground: #e0e0e0;
+  --dimmer: #c2c2c2;
+  --accent: #070f16;
+  --accent-foreground: #ffffff;
+  --destructive: #ff8f8f;
+  --border: #8a8a8a;
+  --input: #a3a3a3;
+  --ring: #8cc8ff;
+  --terminal: #000000;
+
+  --status-waiting: #ffc04d;
+  --status-busy: #5cf08a;
+  --status-idle: #b8c6dc;
+  --status-unknown: #a3a3a3;
+  --status-error: #ff8f8f;
+
+  --host-0: #d3c2ff;
+  --host-1: #ffd98a;
+  --host-2: #8ff0ff;
+  --host-3: #ffb3d6;
+}
+
+/* Madrid: Bernabéu white and gold, royal purple; the crest beside the title. */
+:root[data-palette="madrid"] {
+  --background: #ffffff;
+  --foreground: #1b1633;
+  --card: #f7f5f0;
+  --card-foreground: #1b1633;
+  --popover: #ffffff;
+  --popover-foreground: #1b1633;
+  --primary: #5b2a86;
+  --primary-foreground: #ffffff;
+  --secondary: #efece4;
+  --secondary-foreground: #1b1633;
+  --muted: #efece4;
+  --muted-foreground: #5c5670;
+  --dimmer: #827c92;
+  --accent: #f8edc8;
+  --accent-foreground: #1b1633;
+  --destructive: #c0262d;
+  --border: #e9e3d3;
+  --input: #ddd5c2;
+  --ring: #d9b24a;
+  --terminal: #f9f7f2;
+
+  --status-waiting: #9a6200;
+  --status-busy: #2a7a3a;
+  --status-idle: #5c6680;
+  --status-unknown: #9a94a8;
+  --status-error: #c0262d;
+
+  --host-0: #6a4bbf;
+  --host-1: #8f5a00;
+  --host-2: #00529f;
+  --host-3: #a8365c;
+}
+
+:root[data-palette="madrid"].dark {
+  --background: #110d1d;
+  --foreground: #f2ede0;
+  --card: #18142a;
+  --card-foreground: #f2ede0;
+  --popover: #211b36;
+  --popover-foreground: #f2ede0;
+  --primary: #febe10;
+  --primary-foreground: #110d1d;
+  --secondary: #211b36;
+  --secondary-foreground: #f2ede0;
+  --muted: #211b36;
+  --muted-foreground: #aaa3bd;
+  --dimmer: #7d7690;
+  --accent: #2f2650;
+  --accent-foreground: #fff8e6;
+  --destructive: #ff7b72;
+  --border: #2a2340;
+  --input: #342c4c;
+  --ring: #8a6d1c;
+  --terminal: #0a0814;
+
+  --status-waiting: #f59e3a;
+  --status-busy: #6fd38a;
+  --status-idle: #9a94b8;
+  --status-unknown: #625b78;
+  --status-error: #ff7b72;
+
+  --host-0: #c9b6ff;
+  --host-1: #ffd28a;
+  --host-2: #8fc4ff;
+  --host-3: #f2a7c3;
+}
+
+:root[data-palette="madrid"] .brand-title {
+  display: flex;
+  align-items: center;
+  color: var(--primary);
+}
+
+:root[data-palette="madrid"] .brand-title::before {
+  content: "";
+  width: 1.12em;
+  height: 1.5em;
+  margin-right: 0.32em;
+  background: url("/real-madrid-crest.svg") center / contain no-repeat;
+  filter: drop-shadow(0 1px 1.5px rgb(0 0 0 / 0.25));
+}
+
+:root[data-palette="madrid"] [data-status="busy"],
+:root[data-palette="madrid"] [data-status="idle"] {
+  width: 0.8rem;
+  height: 0.8rem;
+  background: url("/madrid-ball.svg") center / contain no-repeat;
+}
+
+:root[data-palette="madrid"] [data-status="busy"] {
+  animation: madrid-roll 1.4s linear infinite;
+}
+
+:root[data-palette="madrid"] [data-status="idle"] {
+  filter: grayscale(1) opacity(0.5);
+}
+
+:root[data-palette="madrid"] [data-status="waiting"] {
+  width: 0.5rem;
+  height: 0.7rem;
+  border-radius: 1.5px;
+  background-color: #ffd60a;
+  box-shadow: 0 0 0 1px rgb(120 90 0 / 0.45), 0 1px 3px rgb(0 0 0 / 0.3);
+  transform-origin: 50% 100%;
+  animation: madrid-card 2.2s var(--ease-spring) infinite;
+}
+
+@keyframes madrid-roll {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@keyframes madrid-card {
+  0%,
+  60%,
+  100% {
+    transform: rotate(-12deg);
+  }
+  70% {
+    transform: rotate(8deg) translateY(-1px);
+  }
+  80% {
+    transform: rotate(-4deg);
+  }
+}
+
+.madrid-jersey-shirt {
+  fill: #ffffff;
+  stroke: #b8901c;
+}
+
+.madrid-jersey-trim {
+  stroke: #d9a514;
+}
+
+.madrid-jersey-number {
+  fill: #3d1f5c;
+  font-family: var(--font-heading);
+}
+
+.dark .madrid-jersey-shirt {
+  stroke: #febe10;
+}
+
+.dark .madrid-jersey-trim {
+  stroke: #febe10;
+}
+
+.madrid-portrait-number {
+  font-family: var(--font-heading);
+  font-size: 9px;
+  font-weight: 800;
+  line-height: 14px;
+  box-shadow: 0 0 0 1.5px var(--background);
+}
+
+.madrid-pitch {
+  color: var(--primary);
+  opacity: 0.13;
+}
+
+.madrid-crest-hero {
+  width: 5.5rem;
+  height: 7.4rem;
+  background: url("/real-madrid-crest.svg") center / contain no-repeat;
+  filter: drop-shadow(0 8px 18px rgb(0 0 0 / 0.28));
+}
+
+.madrid-hala {
+  color: var(--primary);
+}
+
+.dark .madrid-hala {
+  background: linear-gradient(180deg, #ffe7a3 0%, #febe10 55%, #c98f00 100%);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+
+/* Pelt Barça (#/pelt): a splat lands and fades off the crest; the level-up banner pops and goes; power-ups glow;
+   a hit pops the HUD, a miss flashes red, a power-up flashes the accent; wind streaks blow across. */
+.pelt-splat {
+  animation: pelt-splat 4.2s ease-out forwards;
+}
+
+@keyframes pelt-splat {
+  0% {
+    opacity: 0;
+    scale: 0.3;
+  }
+  8% {
+    opacity: 1;
+    scale: 1.15;
+  }
+  14% {
+    scale: 1;
+  }
+  75% {
+    opacity: 0.95;
+  }
+  100% {
+    opacity: 0;
+    scale: 1;
+  }
+}
+
+.pelt-banner {
+  opacity: 0;
+  animation: pelt-banner 2.4s var(--ease-spring) forwards;
+}
+
+.pelt-pop {
+  animation: pelt-pop 0.32s var(--ease-spring);
+}
+
+@keyframes pelt-pop {
+  0% {
+    scale: 1.4;
+  }
+  100% {
+    scale: 1;
+  }
+}
+
+.pelt-life-out {
+  animation: pelt-life-out 0.5s ease-out;
+}
+
+@keyframes pelt-life-out {
+  0% {
+    scale: 1.6;
+    opacity: 1;
+    filter: none;
+  }
+  100% {
+    scale: 1;
+  }
+}
+
+/* The golden poop: the brown emoji, gilded. */
+.pelt-gold {
+  filter: sepia(1) saturate(3.2) hue-rotate(10deg) brightness(1.4) drop-shadow(0 0 4px rgb(254 190 16 / 0.85));
+}
+
+.pelt-gold-text {
+  color: #c48a00;
+}
+
+.dark .pelt-gold-text {
+  color: #febe10;
+}
+
+.pelt-pickup {
+  box-shadow: 0 4px 10px rgb(0 0 0 / 0.18);
+  animation: pelt-pickup 1.2s ease-in-out infinite;
+}
+
+@keyframes pelt-pickup {
+  0%,
+  100% {
+    box-shadow:
+      0 4px 10px rgb(0 0 0 / 0.18),
+      0 0 0 0 color-mix(in oklab, var(--primary) 45%, transparent);
+  }
+  50% {
+    box-shadow:
+      0 4px 10px rgb(0 0 0 / 0.18),
+      0 0 0 7px color-mix(in oklab, var(--primary) 0%, transparent);
+  }
+}
+
+.pelt-flash {
+  opacity: 0;
+  animation: pelt-flash 0.55s ease-out;
+}
+
+.pelt-flash-miss {
+  box-shadow:
+    inset 0 0 0 3px var(--destructive),
+    inset 0 0 70px color-mix(in oklab, var(--destructive) 40%, transparent);
+}
+
+.pelt-flash-power,
+.pelt-flash-var {
+  background: color-mix(in oklab, var(--primary) 10%, transparent);
+  box-shadow:
+    inset 0 0 0 3px var(--primary),
+    inset 0 0 70px color-mix(in oklab, var(--primary) 35%, transparent);
+}
+
+@keyframes pelt-flash {
+  0% {
+    opacity: 1;
+  }
+  100% {
+    opacity: 0;
+  }
+}
+
+/* Bernabéu time: a slow, breathing accent glow round the arena. */
+.pelt-slowmo {
+  box-shadow: inset 0 0 60px color-mix(in oklab, var(--primary) 28%, transparent);
+  animation: pelt-slowmo 1.6s ease-in-out infinite;
+}
+
+@keyframes pelt-slowmo {
+  50% {
+    opacity: 0.45;
+  }
+}
+
+.pelt-wind-streak {
+  position: absolute;
+  left: 0;
+  width: 18%;
+  height: 2px;
+  border-radius: 2px;
+  background: linear-gradient(90deg, transparent, color-mix(in oklab, var(--primary) 40%, transparent), transparent);
+  animation: pelt-wind 3s linear infinite;
+}
+
+.pelt-wind-streak[data-dir="left"] {
+  animation-direction: reverse;
+}
+
+@keyframes pelt-wind {
+  from {
+    translate: -120% 0;
+  }
+  to {
+    translate: 620% 0;
+  }
+}
+
+@keyframes pelt-banner {
+  0% {
+    opacity: 0;
+    scale: 0.6;
+  }
+  20% {
+    opacity: 1;
+    scale: 1.08;
+  }
+  70% {
+    opacity: 1;
+    scale: 1;
+  }
+  100% {
+    opacity: 0;
+    scale: 1;
+  }
+}
+
+/* Ayu: Light / Mirage, the orange-yellow accent. */
+:root[data-palette="ayu"] {
+  --background: #fcfcfc;
+  --foreground: #4e5357;
+  --card: #f3f4f5;
+  --card-foreground: #4e5357;
+  --popover: #fefefe;
+  --popover-foreground: #4e5357;
+  --primary: #b85100;
+  --primary-foreground: #ffffff;
+  --secondary: #efeff0;
+  --secondary-foreground: #4e5357;
+  --muted: #efeff0;
+  --muted-foreground: #6b6e73;
+  --dimmer: #848689;
+  --accent: #f5e6de;
+  --accent-foreground: #4e5357;
+  --destructive: #cc373b;
+  --border: #e9eaea;
+  --input: #e0e1e1;
+  --ring: #dfa78c;
+  --terminal: #f7f7f8;
+
+  --status-waiting: #a96a00;
+  --status-busy: #527b00;
+  --status-idle: #6c6f74;
+  --status-unknown: #949598;
+  --status-error: #cc373b;
+
+  --host-0: #865dad;
+  --host-1: #007a98;
+  --host-2: #007f5d;
+  --host-3: #c0464a;
+}
+
+:root[data-palette="ayu"].dark {
+  --background: #1f2430;
+  --foreground: #cccac2;
+  --card: #242936;
+  --card-foreground: #cccac2;
+  --popover: #2c313c;
+  --popover-foreground: #cccac2;
+  --primary: #ffcc66;
+  --primary-foreground: #1f2430;
+  --secondary: #2c313c;
+  --secondary-foreground: #cccac2;
+  --muted: #2c313c;
+  --muted-foreground: #8b929a;
+  --dimmer: #76797c;
+  --accent: #46423f;
+  --accent-foreground: #cccac2;
+  --destructive: #ff6666;
+  --border: #323741;
+  --input: #3a3e48;
+  --ring: #7b6b4e;
+  --terminal: #0f121a;
+
+  --status-waiting: #ffad66;
+  --status-busy: #d5ff80;
+  --status-idle: #8a9199;
+  --status-unknown: #606c78;
+  --status-error: #ff6666;
+
+  --host-0: #dfbfff;
+  --host-1: #5ccfe6;
+  --host-2: #95e6cb;
+  --host-3: #f28779;
+}
+
+/* Catppuccin: Latte / Mocha, mauve primary. */
+:root[data-palette="catppuccin"] {
+  --background: #eff1f5;
+  --foreground: #484b64;
+  --card: #e6e9ef;
+  --card-foreground: #484b64;
+  --popover: #f5f6f9;
+  --popover-foreground: #484b64;
+  --primary: #8737ee;
+  --primary-foreground: #ffffff;
+  --secondary: #e2e4ea;
+  --secondary-foreground: #484b64;
+  --muted: #e2e4ea;
+  --muted-foreground: #63667b;
+  --dimmer: #7b7e90;
+  --accent: #e0dcf7;
+  --accent-foreground: #484b64;
+  --destructive: #d10b38;
+  --border: #ccd0da;
+  --input: #bcc0cc;
+  --ring: #b79ef7;
+  --terminal: #eaecf1;
+
+  --status-waiting: #aa5d00;
+  --status-busy: #0c7a00;
+  --status-idle: #65687b;
+  --status-unknown: #898c9c;
+  --status-error: #d10b38;
+
+  --host-0: #145deb;
+  --host-1: #c72d00;
+  --host-2: #00757c;
+  --host-3: #ab3c91;
+}
+
+:root[data-palette="catppuccin"].dark {
+  --background: #1e1e2e;
+  --foreground: #cdd6f4;
+  --card: #232334;
+  --card-foreground: #cdd6f4;
+  --popover: #313244;
+  --popover-foreground: #cdd6f4;
+  --primary: #cba6f7;
+  --primary-foreground: #1e1e2e;
+  --secondary: #313244;
+  --secondary-foreground: #cdd6f4;
+  --muted: #313244;
+  --muted-foreground: #a6adc8;
+  --dimmer: #7f849c;
+  --accent: #3c3651;
+  --accent-foreground: #cdd6f4;
+  --destructive: #f38ba8;
+  --border: #313244;
+  --input: #45475a;
+  --ring: #665781;
+  --terminal: #0e0e18;
+
+  --status-waiting: #f9e2af;
+  --status-busy: #a6e3a1;
+  --status-idle: #9399b2;
+  --status-unknown: #6c7086;
+  --status-error: #f38ba8;
+
+  --host-0: #89b4fa;
+  --host-1: #fab387;
+  --host-2: #94e2d5;
+  --host-3: #f5c2e7;
+}
+
+/* Cobalt2: the official dark, yellow primary; the light variant is derived (no official one). */
+:root[data-palette="cobalt2"] {
+  --background: #f2f6fa;
+  --foreground: #0d2436;
+  --card: #e6eef6;
+  --card-foreground: #0d2436;
+  --popover: #fafbfd;
+  --popover-foreground: #0d2436;
+  --primary: #0060c7;
+  --primary-foreground: #ffffff;
+  --secondary: #e0e6eb;
+  --secondary-foreground: #0d2436;
+  --muted: #e0e6eb;
+  --muted-foreground: #4b5c6c;
+  --dimmer: #73828e;
+  --accent: #d5e3f5;
+  --accent-foreground: #0d2436;
+  --destructive: #d0103a;
+  --border: #d8dfe5;
+  --input: #ccd3da;
+  --ring: #84ade4;
+  --terminal: #ecf0f5;
+
+  --status-waiting: #9e6900;
+  --status-busy: #197c00;
+  --status-idle: #4f6a80;
+  --status-unknown: #8193a2;
+  --status-error: #d0103a;
+
+  --host-0: #9b3fb0;
+  --host-1: #b04e00;
+  --host-2: #007680;
+  --host-3: #c72a63;
+}
+
+:root[data-palette="cobalt2"].dark {
+  --background: #193549;
+  --foreground: #ffffff;
+  --card: #1d3c52;
+  --card-foreground: #ffffff;
+  --popover: #234862;
+  --popover-foreground: #ffffff;
+  --primary: #ffc600;
+  --primary-foreground: #193549;
+  --secondary: #234862;
+  --secondary-foreground: #ffffff;
+  --muted: #234862;
+  --muted-foreground: #aabccc;
+  --dimmer: #8594a0;
+  --accent: #44514e;
+  --accent-foreground: #ffffff;
+  --destructive: #ff759d;
+  --border: #344c5f;
+  --input: #3e5667;
+  --ring: #7b754f;
+  --terminal: #0b1d2a;
+
+  --status-waiting: #ff9d00;
+  --status-busy: #3ad900;
+  --status-idle: #8fa8bf;
+  --status-unknown: #5c7f99;
+  --status-error: #ff759d;
+
+  --host-0: #fb94ff;
+  --host-1: #ffd27f;
+  --host-2: #9effff;
+  --host-3: #ff9db8;
+}
+
+/* Dracula: the official dark, purple primary; the light variant is derived from its accents (Alucard-style). */
+:root[data-palette="dracula"] {
+  --background: #fbf8ef;
+  --foreground: #1f1f1f;
+  --card: #f3efe2;
+  --card-foreground: #1f1f1f;
+  --popover: #fdfcf9;
+  --popover-foreground: #1f1f1f;
+  --primary: #644ac9;
+  --primary-foreground: #ffffff;
+  --secondary: #eae7df;
+  --secondary-foreground: #1f1f1f;
+  --muted: #eae7df;
+  --muted-foreground: #5f5a46;
+  --dimmer: #83827e;
+  --accent: #e5e2ec;
+  --accent-foreground: #1f1f1f;
+  --destructive: #c83727;
+  --border: #e2dfd8;
+  --input: #d6d3cc;
+  --ring: #a9a3e1;
+  --terminal: #f5f2e9;
+
+  --status-waiting: #a34d14;
+  --status-busy: #14710a;
+  --status-idle: #625f78;
+  --status-unknown: #928f9f;
+  --status-error: #c83727;
+
+  --host-0: #036a96;
+  --host-1: #806a0f;
+  --host-2: #a3144d;
+  --host-3: #7a3fb0;
+}
+
+:root[data-palette="dracula"].dark {
+  --background: #282a36;
+  --foreground: #f8f8f2;
+  --card: #2d2f3d;
+  --card-foreground: #f8f8f2;
+  --popover: #343746;
+  --popover-foreground: #f8f8f2;
+  --primary: #bd93f9;
+  --primary-foreground: #282a36;
+  --secondary: #343746;
+  --secondary-foreground: #f8f8f2;
+  --muted: #343746;
+  --muted-foreground: #a9afc9;
+  --dimmer: #6d7eb1;
+  --accent: #433e59;
+  --accent-foreground: #f8f8f2;
+  --destructive: #ff6260;
+  --border: #3a3d4e;
+  --input: #44475a;
+  --ring: #675788;
+  --terminal: #15161e;
+
+  --status-waiting: #ffb86c;
+  --status-busy: #50fa7b;
+  --status-idle: #8f9ac0;
+  --status-unknown: #6a7091;
+  --status-error: #ff6260;
+
+  --host-0: #8be9fd;
+  --host-1: #f1fa8c;
+  --host-2: #ff79c6;
+  --host-3: #d6b8ff;
+}
+
+/* Everforest: Light / Dark (medium), green primary, aqua busy. */
+:root[data-palette="everforest"] {
+  --background: #fdf6e3;
+  --foreground: #45525a;
+  --card: #f4f0d9;
+  --card-foreground: #45525a;
+  --popover: #fffbef;
+  --popover-foreground: #45525a;
+  --primary: #627400;
+  --primary-foreground: #ffffff;
+  --secondary: #efead9;
+  --secondary-foreground: #45525a;
+  --muted: #efead9;
+  --muted-foreground: #606f5f;
+  --dimmer: #7a8678;
+  --accent: #e7e5c8;
+  --accent-foreground: #45525a;
+  --destructive: #cf2b30;
+  --border: #e9e4d4;
+  --input: #dfdccd;
+  --ring: #acb47e;
+  --terminal: #f8f2df;
+
+  --status-waiting: #a46800;
+  --status-busy: #007d55;
+  --status-idle: #637162;
+  --status-unknown: #8b9585;
+  --status-error: #cf2b30;
+
+  --host-0: #b23f91;
+  --host-1: #bb4700;
+  --host-2: #0b74a4;
+  --host-3: #8457b9;
+}
+
+:root[data-palette="everforest"].dark {
+  --background: #2d353b;
+  --foreground: #ebddc1;
+  --card: #343f44;
+  --card-foreground: #ebddc1;
+  --popover: #3d484d;
+  --popover-foreground: #ebddc1;
+  --primary: #a7c080;
+  --primary-foreground: #2d353b;
+  --secondary: #3d484d;
+  --secondary-foreground: #ebddc1;
+  --muted: #3d484d;
+  --muted-foreground: #a1ada4;
+  --dimmer: #859289;
+  --accent: #434e49;
+  --accent-foreground: #ebddc1;
+  --destructive: #f48a8c;
+  --border: #43484b;
+  --input: #4b5051;
+  --ring: #60705b;
+  --terminal: #181d21;
+
+  --status-waiting: #dbbc7f;
+  --status-busy: #83c092;
+  --status-idle: #9faba2;
+  --status-unknown: #7a8478;
+  --status-error: #f48a8c;
+
+  --host-0: #d699b6;
+  --host-1: #e69875;
+  --host-2: #7fbbb3;
+  --host-3: #b8a1e0;
+}
+
+/* Flexoki: paper / black base scale, blue primary (600 accents in light, 400 in dark). */
+:root[data-palette="flexoki"] {
+  --background: #fffcf0;
+  --foreground: #100f0f;
+  --card: #f2f0e5;
+  --card-foreground: #100f0f;
+  --popover: #fffef8;
+  --popover-foreground: #100f0f;
+  --primary: #205ea6;
+  --primary-foreground: #ffffff;
+  --secondary: #ece9de;
+  --secondary-foreground: #100f0f;
+  --muted: #ece9de;
+  --muted-foreground: #6d6c67;
+  --dimmer: #85837e;
+  --accent: #e1e7e8;
+  --accent-foreground: #100f0f;
+  --destructive: #af3029;
+  --border: #e6e4d9;
+  --input: #dad8ce;
+  --ring: #8fadce;
+  --terminal: #f8f5e9;
+
+  --status-waiting: #976d00;
+  --status-busy: #5d7600;
+  --status-idle: #6e6d68;
+  --status-unknown: #94928a;
+  --status-error: #af3029;
+
+  --host-0: #5e409d;
+  --host-1: #b74d0c;
+  --host-2: #157972;
+  --host-3: #a02f6f;
+}
+
+:root[data-palette="flexoki"].dark {
+  --background: #100f0f;
+  --foreground: #cecdc3;
+  --card: #1c1b1a;
+  --card-foreground: #cecdc3;
+  --popover: #282726;
+  --popover-foreground: #cecdc3;
+  --primary: #4789c2;
+  --primary-foreground: #100f0f;
+  --secondary: #282726;
+  --secondary-foreground: #cecdc3;
+  --muted: #282726;
+  --muted-foreground: #878580;
+  --dimmer: #6f6e69;
+  --accent: #1c242e;
+  --accent-foreground: #cecdc3;
+  --destructive: #dc574a;
+  --border: #282726;
+  --input: #343331;
+  --ring: #2a4258;
+  --terminal: #060505;
+
+  --status-waiting: #d0a215;
+  --status-busy: #879a39;
+  --status-idle: #878580;
+  --status-unknown: #61605d;
+  --status-error: #dc574a;
+
+  --host-0: #8b7ec8;
+  --host-1: #da702c;
+  --host-2: #3aa99f;
+  --host-3: #ce5d97;
+}
+
+/* GitHub: Primer light / dark, accent blue. */
+:root[data-palette="github"] {
+  --background: #ffffff;
+  --foreground: #1f2328;
+  --card: #f6f8fa;
+  --card-foreground: #1f2328;
+  --popover: #ffffff;
+  --popover-foreground: #1f2328;
+  --primary: #0969da;
+  --primary-foreground: #ffffff;
+  --secondary: #edeeee;
+  --secondary-foreground: #1f2328;
+  --muted: #edeeee;
+  --muted-foreground: #59636e;
+  --dimmer: #7f8996;
+  --accent: #e1ecfc;
+  --accent-foreground: #1f2328;
+  --destructive: #d1242f;
+  --border: #d1d9e0;
+  --input: #d1d9e0;
+  --ring: #8eb6f1;
+  --terminal: #f9f9f9;
+
+  --status-waiting: #9a6700;
+  --status-busy: #1a7f37;
+  --status-idle: #59636e;
+  --status-unknown: #8c959f;
+  --status-error: #d1242f;
+
+  --host-0: #8250df;
+  --host-1: #bc4c00;
+  --host-2: #1b7c83;
+  --host-3: #bf3989;
+}
+
+:root[data-palette="github"].dark {
+  --background: #0d1117;
+  --foreground: #e6edf3;
+  --card: #151b23;
+  --card-foreground: #e6edf3;
+  --popover: #1b222c;
+  --popover-foreground: #e6edf3;
+  --primary: #4493f8;
+  --primary-foreground: #0d1117;
+  --secondary: #1b222c;
+  --secondary-foreground: #e6edf3;
+  --muted: #1b222c;
+  --muted-foreground: #9198a1;
+  --dimmer: #6e7681;
+  --accent: #18283d;
+  --accent-foreground: #e6edf3;
+  --destructive: #f85149;
+  --border: #30363d;
+  --input: #3d444d;
+  --ring: #264773;
+  --terminal: #05060a;
+
+  --status-waiting: #d29922;
+  --status-busy: #3fb950;
+  --status-idle: #9198a1;
+  --status-unknown: #656c76;
+  --status-error: #f85149;
+
+  --host-0: #ab7df8;
+  --host-1: #db6d28;
+  --host-2: #39c5cf;
+  --host-3: #db61a2;
+}
+
+/* Gruvbox: light / dark (medium), faded accents in light, bright in dark. */
+:root[data-palette="gruvbox"] {
+  --background: #fbf1c7;
+  --foreground: #3c3836;
+  --card: #f2e5bc;
+  --card-foreground: #3c3836;
+  --popover: #fdf6dc;
+  --popover-foreground: #3c3836;
+  --primary: #076678;
+  --primary-foreground: #ffffff;
+  --secondary: #ece3bc;
+  --secondary-foreground: #3c3836;
+  --muted: #ece3bc;
+  --muted-foreground: #665c54;
+  --dimmer: #7c6f64;
+  --accent: #dedebd;
+  --accent-foreground: #3c3836;
+  --destructive: #9d0006;
+  --border: #ebdbb2;
+  --input: #d5c4a1;
+  --ring: #8caaa1;
+  --terminal: #f6ecc3;
+
+  --status-waiting: #9e6000;
+  --status-busy: #6f6900;
+  --status-idle: #71655a;
+  --status-unknown: #988975;
+  --status-error: #9d0006;
+
+  --host-0: #8f3f71;
+  --host-1: #af3a03;
+  --host-2: #39724f;
+  --host-3: #4f5ba8;
+}
+
+:root[data-palette="gruvbox"].dark {
+  --background: #282828;
+  --foreground: #ebdbb2;
+  --card: #32302f;
+  --card-foreground: #ebdbb2;
+  --popover: #3c3836;
+  --popover-foreground: #ebdbb2;
+  --primary: #83a598;
+  --primary-foreground: #282828;
+  --secondary: #3c3836;
+  --secondary-foreground: #ebdbb2;
+  --muted: #3c3836;
+  --muted-foreground: #bdae93;
+  --dimmer: #928374;
+  --accent: #393f3c;
+  --accent-foreground: #ebdbb2;
+  --destructive: #ff654d;
+  --border: #3c3836;
+  --input: #504945;
+  --ring: #4f5d57;
+  --terminal: #151515;
+
+  --status-waiting: #fabd2f;
+  --status-busy: #b8bb26;
+  --status-idle: #a89984;
+  --status-unknown: #7d7065;
+  --status-error: #ff654d;
+
+  --host-0: #d3869b;
+  --host-1: #fe8019;
+  --host-2: #8ec07c;
+  --host-3: #9db5e0;
+}
+
+/* Horizon: Bright / Dark, rosy primary. */
+:root[data-palette="horizon"] {
+  --background: #fdf0ed;
+  --foreground: #1c1e26;
+  --card: #f9e4de;
+  --card-foreground: #1c1e26;
+  --popover: #fff7f5;
+  --popover-foreground: #1c1e26;
+  --primary: #d10038;
+  --primary-foreground: #ffffff;
+  --secondary: #ebdfdd;
+  --secondary-foreground: #1c1e26;
+  --muted: #ebdfdd;
+  --muted-foreground: #57565b;
+  --dimmer: #817d80;
+  --accent: #fcd7d4;
+  --accent-foreground: #1c1e26;
+  --destructive: #c41818;
+  --border: #e3d8d7;
+  --input: #d7cdcc;
+  --ring: #f09090;
+  --terminal: #f7eae7;
+
+  --status-waiting: #a55f00;
+  --status-busy: #007749;
+  --status-idle: #656879;
+  --status-unknown: #8e8b90;
+  --status-error: #c41818;
+
+  --host-0: #8a31b9;
+  --host-1: #cc1e00;
+  --host-2: #00737b;
+  --host-3: #2b5fb8;
+}
+
+:root[data-palette="horizon"].dark {
+  --background: #1c1e26;
+  --foreground: #e0e0e0;
+  --card: #232530;
+  --card-foreground: #e0e0e0;
+  --popover: #2e303e;
+  --popover-foreground: #e0e0e0;
+  --primary: #ed577c;
+  --primary-foreground: #1c1e26;
+  --secondary: #2e303e;
+  --secondary-foreground: #e0e0e0;
+  --muted: #2e303e;
+  --muted-foreground: #a6a7ad;
+  --dimmer: #717498;
+  --accent: #422b36;
+  --accent-foreground: #e0e0e0;
+  --destructive: #fd4763;
+  --border: #31333b;
+  --input: #3a3c43;
+  --ring: #743a4b;
+  --terminal: #0d0e13;
+
+  --status-waiting: #fab795;
+  --status-busy: #29d398;
+  --status-idle: #8a8fa8;
+  --status-unknown: #6c6f93;
+  --status-error: #fd4763;
+
+  --host-0: #b877db;
+  --host-1: #f09483;
+  --host-2: #59e3e3;
+  --host-3: #ee64ae;
+}
+
+/* Iceberg: light / dark, blue primary. */
+:root[data-palette="iceberg"] {
+  --background: #e8e9ec;
+  --foreground: #33374c;
+  --card: #dcdfe7;
+  --card-foreground: #33374c;
+  --popover: #f2f3f5;
+  --popover-foreground: #33374c;
+  --primary: #2d539e;
+  --primary-foreground: #ffffff;
+  --secondary: #dadbe0;
+  --secondary-foreground: #33374c;
+  --muted: #dadbe0;
+  --muted-foreground: #5b6078;
+  --dimmer: #717791;
+  --accent: #ced5e3;
+  --accent-foreground: #33374c;
+  --destructive: #ae3561;
+  --border: #d4d5db;
+  --input: #caccd2;
+  --ring: #879dc7;
+  --terminal: #e3e4e8;
+
+  --status-waiting: #a45514;
+  --status-busy: #466c18;
+  --status-idle: #5d627b;
+  --status-unknown: #81859a;
+  --status-error: #ae3561;
+
+  --host-0: #7052ac;
+  --host-1: #875911;
+  --host-2: #22698b;
+  --host-3: #9f3f7e;
+}
+
+:root[data-palette="iceberg"].dark {
+  --background: #161821;
+  --foreground: #c6c8d1;
+  --card: #1e2132;
+  --card-foreground: #c6c8d1;
+  --popover: #272c42;
+  --popover-foreground: #c6c8d1;
+  --primary: #84a0c6;
+  --primary-foreground: #161821;
+  --secondary: #272c42;
+  --secondary-foreground: #c6c8d1;
+  --muted: #272c42;
+  --muted-foreground: #9a9ca5;
+  --dimmer: #6c718a;
+  --accent: #2a303e;
+  --accent-foreground: #c6c8d1;
+  --destructive: #e27878;
+  --border: #292b35;
+  --input: #31333d;
+  --ring: #445065;
+  --terminal: #090a10;
+
+  --status-waiting: #e2a478;
+  --status-busy: #b4be82;
+  --status-idle: #9a9ca5;
+  --status-unknown: #6b7089;
+  --status-error: #e27878;
+
+  --host-0: #a093c7;
+  --host-1: #e2c178;
+  --host-2: #89b8c2;
+  --host-3: #d793b6;
+}
+
+/* Kanagawa: Lotus / Wave, crystal-blue primary. */
+:root[data-palette="kanagawa"] {
+  --background: #f2ecbc;
+  --foreground: #424251;
+  --card: #e7dba0;
+  --card-foreground: #424251;
+  --popover: #f6f1d0;
+  --popover-foreground: #424251;
+  --primary: #446091;
+  --primary-foreground: #ffffff;
+  --secondary: #e4dfb4;
+  --secondary-foreground: #424251;
+  --muted: #e4dfb4;
+  --muted-foreground: #615e51;
+  --dimmer: #76756c;
+  --accent: #dad9b8;
+  --accent-foreground: #424251;
+  --destructive: #b32b42;
+  --border: #e4d794;
+  --input: #d5c78a;
+  --ring: #97a5aa;
+  --terminal: #ede7b9;
+
+  --status-waiting: #a94d00;
+  --status-busy: #4e672d;
+  --status-idle: #636054;
+  --status-unknown: #858191;
+  --status-error: #b32b42;
+
+  --host-0: #624c83;
+  --host-1: #67612f;
+  --host-2: #27677c;
+  --host-3: #974261;
+}
+
+:root[data-palette="kanagawa"].dark {
+  --background: #1f1f28;
+  --foreground: #dcd7ba;
+  --card: #2a2a37;
+  --card-foreground: #dcd7ba;
+  --popover: #363646;
+  --popover-foreground: #dcd7ba;
+  --primary: #7e9cd8;
+  --primary-foreground: #1f1f28;
+  --secondary: #363646;
+  --secondary-foreground: #dcd7ba;
+  --muted: #363646;
+  --muted-foreground: #c8c093;
+  --dimmer: #7d7c73;
+  --accent: #303547;
+  --accent-foreground: #dcd7ba;
+  --destructive: #ff5d62;
+  --border: #343339;
+  --input: #3c3c40;
+  --ring: #475371;
+  --terminal: #0f0f15;
+
+  --status-waiting: #ffa066;
+  --status-busy: #98bb6c;
+  --status-idle: #978ead;
+  --status-unknown: #727169;
+  --status-error: #ff5d62;
+
+  --host-0: #9e87c1;
+  --host-1: #e6c384;
+  --host-2: #7aa89f;
+  --host-3: #d27e99;
+}
+
+/* Material: Lighter / Palenight, blue primary. */
+:root[data-palette="material"] {
+  --background: #fafafa;
+  --foreground: #3b545f;
+  --card: #f0f0f0;
+  --card-foreground: #3b545f;
+  --popover: #ffffff;
+  --popover-foreground: #3b545f;
+  --primary: #4e6ea2;
+  --primary-foreground: #ffffff;
+  --secondary: #ebedee;
+  --secondary-foreground: #3b545f;
+  --muted: #ebedee;
+  --muted-foreground: #5c6f79;
+  --dimmer: #78858a;
+  --accent: #e2e7ef;
+  --accent-foreground: #3b545f;
+  --destructive: #d42425;
+  --border: #e5e8e9;
+  --input: #dbdfe1;
+  --ring: #a1b2cf;
+  --terminal: #f5f6f6;
+
+  --status-waiting: #a96500;
+  --status-busy: #54780e;
+  --status-idle: #5e707a;
+  --status-unknown: #87959c;
+  --status-error: #d42425;
+
+  --host-0: #7847f9;
+  --host-1: #c43e13;
+  --host-2: #007981;
+  --host-3: #54780e;
+}
+
+:root[data-palette="material"].dark {
+  --background: #292d3e;
+  --foreground: #bbc2e3;
+  --card: #2f3447;
+  --card-foreground: #bbc2e3;
+  --popover: #34324a;
+  --popover-foreground: #bbc2e3;
+  --primary: #82aaff;
+  --primary-foreground: #292d3e;
+  --secondary: #34324a;
+  --secondary-foreground: #bbc2e3;
+  --muted: #34324a;
+  --muted-foreground: #959dcb;
+  --dimmer: #7c83ab;
+  --accent: #3a4461;
+  --accent-foreground: #bbc2e3;
+  --destructive: #f4757c;
+  --border: #3a3e51;
+  --input: #404559;
+  --ring: #4f628f;
+  --terminal: #151823;
+
+  --status-waiting: #ffcb6b;
+  --status-busy: #c3e88d;
+  --status-idle: #939bc1;
+  --status-unknown: #6d749b;
+  --status-error: #f4757c;
+
+  --host-0: #c792ea;
+  --host-1: #f78c6c;
+  --host-2: #89ddff;
+  --host-3: #c3e88d;
+}
+
+/* Monokai Pro: Light filter / classic, yellow primary, orange for waiting. */
+:root[data-palette="monokai"] {
+  --background: #faf4f2;
+  --foreground: #29242a;
+  --card: #ede7e5;
+  --card-foreground: #29242a;
+  --popover: #fffbfa;
+  --popover-foreground: #29242a;
+  --primary: #a25300;
+  --primary-foreground: #ffffff;
+  --secondary: #eae4e2;
+  --secondary-foreground: #29242a;
+  --muted: #eae4e2;
+  --muted-foreground: #6b6669;
+  --dimmer: #817d7e;
+  --accent: #f0dfd5;
+  --accent-foreground: #29242a;
+  --destructive: #c3275d;
+  --border: #e3dddc;
+  --input: #d7d1d1;
+  --ring: #d0a385;
+  --terminal: #f4eeec;
+
+  --status-waiting: #bb5000;
+  --status-busy: #007847;
+  --status-idle: #6b6669;
+  --status-unknown: #918c8d;
+  --status-error: #c3275d;
+
+  --host-0: #6f57bd;
+  --host-1: #00718d;
+  --host-2: #9d4b80;
+  --host-3: #5f7009;
+}
+
+:root[data-palette="monokai"].dark {
+  --background: #2d2a2e;
+  --foreground: #fcfcfa;
+  --card: #353236;
+  --card-foreground: #fcfcfa;
+  --popover: #403e41;
+  --popover-foreground: #fcfcfa;
+  --primary: #ffd866;
+  --primary-foreground: #2d2a2e;
+  --secondary: #403e41;
+  --secondary-foreground: #fcfcfa;
+  --muted: #403e41;
+  --muted-foreground: #c1c0c0;
+  --dimmer: #939293;
+  --accent: #52493c;
+  --accent-foreground: #fcfcfa;
+  --destructive: #ff658c;
+  --border: #444145;
+  --input: #4e4b4e;
+  --ring: #84734c;
+  --terminal: #181618;
+
+  --status-waiting: #fc9867;
+  --status-busy: #a9dc76;
+  --status-idle: #9c9b9c;
+  --status-unknown: #777577;
+  --status-error: #ff658c;
+
+  --host-0: #ab9df2;
+  --host-1: #78dce8;
+  --host-2: #e5a5d8;
+  --host-3: #d8e07a;
+}
+
+/* Moonlight: the official dark (Moonlight II), blue primary; the light variant is derived. */
+:root[data-palette="moonlight"] {
+  --background: #f5f6fc;
+  --foreground: #222436;
+  --card: #eceef9;
+  --card-foreground: #222436;
+  --popover: #ffffff;
+  --popover-foreground: #222436;
+  --primary: #3b64d3;
+  --primary-foreground: #ffffff;
+  --secondary: #e4e5ed;
+  --secondary-foreground: #222436;
+  --muted: #e4e5ed;
+  --muted-foreground: #5a5c6c;
+  --dimmer: #7f818f;
+  --accent: #dbe3f8;
+  --accent-foreground: #222436;
+  --destructive: #c93143;
+  --border: #dddee6;
+  --input: #d2d3dc;
+  --ring: #94afeb;
+  --terminal: #eff0f7;
+
+  --status-waiting: #b15f00;
+  --status-busy: #2e7b04;
+  --status-idle: #5c6699;
+  --status-unknown: #8990b2;
+  --status-error: #c93143;
+
+  --host-0: #864bd4;
+  --host-1: #b34c1b;
+  --host-2: #007a6d;
+  --host-3: #b63892;
+}
+
+:root[data-palette="moonlight"].dark {
+  --background: #222436;
+  --foreground: #c8d3f5;
+  --card: #272a3e;
+  --card-foreground: #c8d3f5;
+  --popover: #2f334d;
+  --popover-foreground: #c8d3f5;
+  --primary: #82aaff;
+  --primary-foreground: #222436;
+  --secondary: #2f334d;
+  --secondary-foreground: #c8d3f5;
+  --muted: #2f334d;
+  --muted-foreground: #a9b8e8;
+  --dimmer: #7a88cf;
+  --accent: #343c5a;
+  --accent-foreground: #c8d3f5;
+  --destructive: #ff757f;
+  --border: #35384c;
+  --input: #3c4055;
+  --ring: #4b5c8a;
+  --terminal: #11121e;
+
+  --status-waiting: #ffc777;
+  --status-busy: #c3e88d;
+  --status-idle: #8790bd;
+  --status-unknown: #656b8f;
+  --status-error: #ff757f;
+
+  --host-0: #c099ff;
+  --host-1: #ff966c;
+  --host-2: #4fd6be;
+  --host-3: #fca7ea;
+}
+
+/* Night Owl: Light Owl / Night Owl, blue primary. */
+:root[data-palette="night-owl"] {
+  --background: #fbfbfb;
+  --foreground: #403f53;
+  --card: #f0f0f0;
+  --card-foreground: #403f53;
+  --popover: #ffffff;
+  --popover-foreground: #403f53;
+  --primary: #3c68c7;
+  --primary-foreground: #ffffff;
+  --secondary: #ededee;
+  --secondary-foreground: #403f53;
+  --muted: #ededee;
+  --muted-foreground: #666b7b;
+  --dimmer: #7c8394;
+  --accent: #e1e8f6;
+  --accent-foreground: #403f53;
+  --destructive: #ce2c2e;
+  --border: #e6e6e9;
+  --input: #dcdce0;
+  --ring: #98b2e4;
+  --terminal: #f6f6f6;
+
+  --status-waiting: #9b6d00;
+  --status-busy: #007d58;
+  --status-idle: #696d7d;
+  --status-unknown: #8c92a3;
+  --status-error: #ce2c2e;
+
+  --host-0: #9749c0;
+  --host-1: #af504f;
+  --host-2: #007a7f;
+  --host-3: #aa0982;
+}
+
+:root[data-palette="night-owl"].dark {
+  --background: #011627;
+  --foreground: #d6deeb;
+  --card: #0b2942;
+  --card-foreground: #d6deeb;
+  --popover: #13344f;
+  --popover-foreground: #d6deeb;
+  --primary: #82aaff;
+  --primary-foreground: #011627;
+  --secondary: #13344f;
+  --secondary-foreground: #d6deeb;
+  --muted: #13344f;
+  --muted-foreground: #a1aabf;
+  --dimmer: #667b7b;
+  --accent: #16304c;
+  --accent-foreground: #d6deeb;
+  --destructive: #f55855;
+  --border: #172c3d;
+  --input: #213546;
+  --ring: #355380;
+  --terminal: #000914;
+
+  --status-waiting: #ecc48d;
+  --status-busy: #addb67;
+  --status-idle: #8a9bb5;
+  --status-unknown: #5f7e97;
+  --status-error: #f55855;
+
+  --host-0: #c792ea;
+  --host-1: #f78c6c;
+  --host-2: #7fdbca;
+  --host-3: #ff5ca5;
+}
+
+/* Nightfox: Dayfox / Nightfox, blue primary. */
+:root[data-palette="nightfox"] {
+  --background: #f6f2ee;
+  --foreground: #3d2b5a;
+  --card: #efe8e2;
+  --card-foreground: #3d2b5a;
+  --popover: #fbf9f7;
+  --popover-foreground: #3d2b5a;
+  --primary: #2848a9;
+  --primary-foreground: #ffffff;
+  --secondary: #e8e3e3;
+  --secondary-foreground: #3d2b5a;
+  --muted: #e8e3e3;
+  --muted-foreground: #643f61;
+  --dimmer: #837a72;
+  --accent: #d9dce7;
+  --accent-foreground: #3d2b5a;
+  --destructive: #a5222f;
+  --border: #e4dcd4;
+  --input: #dbd1dd;
+  --ring: #899ecf;
+  --terminal: #f1edea;
+
+  --status-waiting: #ac5402;
+  --status-busy: #396847;
+  --status-idle: #71607a;
+  --status-unknown: #948c86;
+  --status-error: #a5222f;
+
+  --host-0: #6e33ce;
+  --host-1: #a45300;
+  --host-2: #20737a;
+  --host-3: #b63973;
+}
+
+:root[data-palette="nightfox"].dark {
+  --background: #192330;
+  --foreground: #cdcecf;
+  --card: #1e2a38;
+  --card-foreground: #cdcecf;
+  --popover: #212e3f;
+  --popover-foreground: #cdcecf;
+  --primary: #719cd6;
+  --primary-foreground: #192330;
+  --secondary: #212e3f;
+  --secondary-foreground: #cdcecf;
+  --muted: #212e3f;
+  --muted-foreground: #aeafb0;
+  --dimmer: #738091;
+  --accent: #29394e;
+  --accent-foreground: #cdcecf;
+  --destructive: #e46783;
+  --border: #29394f;
+  --input: #39506d;
+  --ring: #3e5676;
+  --terminal: #0b111a;
+
+  --status-waiting: #dbc074;
+  --status-busy: #81b29a;
+  --status-idle: #8a99ad;
+  --status-unknown: #71839b;
+  --status-error: #e46783;
+
+  --host-0: #a27edb;
+  --host-1: #f4a261;
+  --host-2: #63cdcf;
+  --host-3: #e98fad;
+}
+
+/* Nord: Snow Storm light / Polar Night dark, Frost primary, Aurora status. */
+:root[data-palette="nord"] {
+  --background: #eceff4;
+  --foreground: #2e3440;
+  --card: #e5e9f0;
+  --card-foreground: #2e3440;
+  --popover: #f5f7fa;
+  --popover-foreground: #2e3440;
+  --primary: #486b94;
+  --primary-foreground: #ffffff;
+  --secondary: #dde1e6;
+  --secondary-foreground: #2e3440;
+  --muted: #dde1e6;
+  --muted-foreground: #4c566a;
+  --dimmer: #6c768a;
+  --accent: #d5dde7;
+  --accent-foreground: #2e3440;
+  --destructive: #a74c56;
+  --border: #d8dee9;
+  --input: #c8d0dd;
+  --ring: #97abc4;
+  --terminal: #e7eaef;
+
+  --status-waiting: #8a6d2e;
+  --status-busy: #577041;
+  --status-idle: #4c566a;
+  --status-unknown: #858ea0;
+  --status-error: #a74c56;
+
+  --host-0: #815e7b;
+  --host-1: #9a5641;
+  --host-2: #3a707f;
+  --host-3: #4d6b89;
+}
+
+:root[data-palette="nord"].dark {
+  --background: #2e3440;
+  --foreground: #eceff4;
+  --card: #343b48;
+  --card-foreground: #eceff4;
+  --popover: #3b4252;
+  --popover-foreground: #eceff4;
+  --primary: #88c0d0;
+  --primary-foreground: #2e3440;
+  --secondary: #3b4252;
+  --secondary-foreground: #eceff4;
+  --muted: #3b4252;
+  --muted-foreground: #d8dee9;
+  --dimmer: #9099ab;
+  --accent: #3f4d5a;
+  --accent-foreground: #eceff4;
+  --destructive: #eb8890;
+  --border: #3b4252;
+  --input: #434c5e;
+  --ring: #556f7d;
+  --terminal: #181c24;
+
+  --status-waiting: #ebcb8b;
+  --status-busy: #a3be8c;
+  --status-idle: #88a8c9;
+  --status-unknown: #707d98;
+  --status-error: #eb8890;
+
+  --host-0: #c099b8;
+  --host-1: #dc927b;
+  --host-2: #8fbcbb;
+  --host-3: #a3b8e0;
+}
+
+/* Oceanic Next: the official dark, blue primary; the light variant is derived. */
+:root[data-palette="oceanic-next"] {
+  --background: #f5f7fa;
+  --foreground: #1b2b34;
+  --card: #e9edf2;
+  --card-foreground: #1b2b34;
+  --popover: #ffffff;
+  --popover-foreground: #1b2b34;
+  --primary: #2e6ead;
+  --primary-foreground: #ffffff;
+  --secondary: #e4e7eb;
+  --secondary-foreground: #1b2b34;
+  --muted: #e4e7eb;
+  --muted-foreground: #4f5b66;
+  --dimmer: #65737e;
+  --accent: #dbe5f1;
+  --accent-foreground: #1b2b34;
+  --destructive: #c8303a;
+  --border: #dde0e4;
+  --input: #d0d5d9;
+  --ring: #92b2d5;
+  --terminal: #eff1f5;
+
+  --status-waiting: #aa6200;
+  --status-busy: #3d7839;
+  --status-idle: #5f6d78;
+  --status-unknown: #8a8f9c;
+  --status-error: #c8303a;
+
+  --host-0: #8f4f8f;
+  --host-1: #b04e02;
+  --host-2: #237677;
+  --host-3: #4969b1;
+}
+
+:root[data-palette="oceanic-next"].dark {
+  --background: #1b2b34;
+  --foreground: #d8dee9;
+  --card: #22333d;
+  --card-foreground: #d8dee9;
+  --popover: #343d46;
+  --popover-foreground: #d8dee9;
+  --primary: #6a9dd0;
+  --primary-foreground: #1b2b34;
+  --secondary: #343d46;
+  --secondary-foreground: #d8dee9;
+  --muted: #343d46;
+  --muted-foreground: #a7adba;
+  --dimmer: #74828e;
+  --accent: #294050;
+  --accent-foreground: #d8dee9;
+  --destructive: #f96b72;
+  --border: #2c3e48;
+  --input: #4f5b66;
+  --ring: #3c5b76;
+  --terminal: #0c161c;
+
+  --status-waiting: #fac863;
+  --status-busy: #99c794;
+  --status-idle: #a7adba;
+  --status-unknown: #66747f;
+  --status-error: #f96b72;
+
+  --host-0: #c594c5;
+  --host-1: #f99157;
+  --host-2: #5fb3b3;
+  --host-3: #6a9dd0;
+}
+
+/* One: One Light / One Dark, blue primary. */
+:root[data-palette="one"] {
+  --background: #fafafa;
+  --foreground: #383a42;
+  --card: #f0f0f1;
+  --card-foreground: #383a42;
+  --popover: #ffffff;
+  --popover-foreground: #383a42;
+  --primary: #3066df;
+  --primary-foreground: #ffffff;
+  --secondary: #ebebec;
+  --secondary-foreground: #383a42;
+  --muted: #ebebec;
+  --muted-foreground: #686b76;
+  --dimmer: #828388;
+  --accent: #dfe8f9;
+  --accent-foreground: #383a42;
+  --destructive: #c63a30;
+  --border: #e5e5e6;
+  --input: #dadadc;
+  --ring: #93b3f1;
+  --terminal: #f5f5f5;
+
+  --status-waiting: #a36800;
+  --status-busy: #2a7d2c;
+  --status-idle: #696c77;
+  --status-unknown: #919298;
+  --status-error: #c63a30;
+
+  --host-0: #a626a4;
+  --host-1: #946400;
+  --host-2: #0074ab;
+  --host-3: #ca1243;
+}
+
+:root[data-palette="one"].dark {
+  --background: #282c34;
+  --foreground: #c2c9d6;
+  --card: #2c313a;
+  --card-foreground: #c2c9d6;
+  --popover: #333842;
+  --popover-foreground: #c2c9d6;
+  --primary: #61afef;
+  --primary-foreground: #282c34;
+  --secondary: #333842;
+  --secondary-foreground: #c2c9d6;
+  --muted: #333842;
+  --muted-foreground: #9da5b4;
+  --dimmer: #7a818f;
+  --accent: #344455;
+  --accent-foreground: #c2c9d6;
+  --destructive: #ea757d;
+  --border: #3a3f4b;
+  --input: #3e4451;
+  --ring: #436482;
+  --terminal: #15171c;
+
+  --status-waiting: #e5c07b;
+  --status-busy: #98c379;
+  --status-idle: #9299a7;
+  --status-unknown: #6c7380;
+  --status-error: #ea757d;
+
+  --host-0: #c97ae0;
+  --host-1: #d19a66;
+  --host-2: #56b6c2;
+  --host-3: #e88bb0;
+}
+
+/* Oxocarbon: light / dark (IBM Carbon), blue primary; status from the Carbon palette. */
+:root[data-palette="oxocarbon"] {
+  --background: #ffffff;
+  --foreground: #161616;
+  --card: #f2f4f8;
+  --card-foreground: #161616;
+  --popover: #ffffff;
+  --popover-foreground: #161616;
+  --primary: #0f62fe;
+  --primary-foreground: #ffffff;
+  --secondary: #ececec;
+  --secondary-foreground: #161616;
+  --muted: #ececec;
+  --muted-foreground: #525252;
+  --dimmer: #6f6f6f;
+  --accent: #e1edff;
+  --accent-foreground: #161616;
+  --destructive: #da1e28;
+  --border: #dde1e6;
+  --input: #c1c7cd;
+  --ring: #8cb7ff;
+  --terminal: #f8f8f8;
+
+  --status-waiting: #8e6a00;
+  --status-busy: #198038;
+  --status-idle: #525252;
+  --status-unknown: #8d8d8d;
+  --status-error: #da1e28;
+
+  --host-0: #673ab7;
+  --host-1: #ca3d00;
+  --host-2: #007d79;
+  --host-3: #ca2f78;
+}
+
+:root[data-palette="oxocarbon"].dark {
+  --background: #161616;
+  --foreground: #f2f4f8;
+  --card: #1f1f1f;
+  --card-foreground: #f2f4f8;
+  --popover: #262626;
+  --popover-foreground: #f2f4f8;
+  --primary: #78a9ff;
+  --primary-foreground: #161616;
+  --secondary: #262626;
+  --secondary-foreground: #f2f4f8;
+  --muted: #262626;
+  --muted-foreground: #dde1e6;
+  --dimmer: #8d8d8d;
+  --accent: #28303e;
+  --accent-foreground: #f2f4f8;
+  --destructive: #ee5396;
+  --border: #262626;
+  --input: #393939;
+  --ring: #405375;
+  --terminal: #090909;
+
+  --status-waiting: #f1c21b;
+  --status-busy: #42be65;
+  --status-idle: #a2a9b0;
+  --status-unknown: #6f6f6f;
+  --status-error: #ee5396;
+
+  --host-0: #be95ff;
+  --host-1: #ffab91;
+  --host-2: #08bdba;
+  --host-3: #ff7eb6;
+}
+
+/* PaperColor: light / dark, blue primary. */
+:root[data-palette="papercolor"] {
+  --background: #eeeeee;
+  --foreground: #444444;
+  --card: #e4e4e4;
+  --card-foreground: #444444;
+  --popover: #f6f6f6;
+  --popover-foreground: #444444;
+  --primary: #005faf;
+  --primary-foreground: #ffffff;
+  --secondary: #e1e1e1;
+  --secondary-foreground: #444444;
+  --muted: #e1e1e1;
+  --muted-foreground: #5f5f5f;
+  --dimmer: #7b7b7b;
+  --accent: #d2dbe7;
+  --accent-foreground: #444444;
+  --destructive: #ce0000;
+  --border: #dbdbdb;
+  --input: #d2d2d2;
+  --ring: #83a7d1;
+  --terminal: #e9e9e9;
+
+  --status-waiting: #be4800;
+  --status-busy: #007700;
+  --status-idle: #5f5f87;
+  --status-unknown: #898989;
+  --status-error: #ce0000;
+
+  --host-0: #8700af;
+  --host-1: #9f5100;
+  --host-2: #005f87;
+  --host-3: #c40078;
+}
+
+:root[data-palette="papercolor"].dark {
+  --background: #1c1c1c;
+  --foreground: #d0d0d0;
+  --card: #262626;
+  --card-foreground: #d0d0d0;
+  --popover: #303030;
+  --popover-foreground: #d0d0d0;
+  --primary: #5fafd7;
+  --primary-foreground: #1c1c1c;
+  --secondary: #303030;
+  --secondary-foreground: #d0d0d0;
+  --muted: #303030;
+  --muted-foreground: #a8a8a8;
+  --dimmer: #808080;
+  --accent: #2a363c;
+  --accent-foreground: #d0d0d0;
+  --destructive: #ff5f5f;
+  --border: #303030;
+  --input: #383838;
+  --ring: #3b5969;
+  --terminal: #0d0d0d;
+
+  --status-waiting: #ffaf00;
+  --status-busy: #5faf00;
+  --status-idle: #8a8aaf;
+  --status-unknown: #686868;
+  --status-error: #ff5f5f;
+
+  --host-0: #af87d7;
+  --host-1: #d7875f;
+  --host-2: #00afaf;
+  --host-3: #ff5faf;
+}
+
+/* Poimandres: the official dark, pale-blue primary, mint for busy; the light variant is derived. */
+:root[data-palette="poimandres"] {
+  --background: #f4f6fb;
+  --foreground: #1b1e28;
+  --card: #e9edf6;
+  --card-foreground: #1b1e28;
+  --popover: #ffffff;
+  --popover-foreground: #1b1e28;
+  --primary: #2c6db2;
+  --primary-foreground: #ffffff;
+  --secondary: #e3e5ea;
+  --secondary-foreground: #1b1e28;
+  --muted: #e3e5ea;
+  --muted-foreground: #4d5470;
+  --dimmer: #767c9d;
+  --accent: #dae4f2;
+  --accent-foreground: #1b1e28;
+  --destructive: #bf356c;
+  --border: #dbdee3;
+  --input: #cfd2d8;
+  --ring: #91b1d8;
+  --terminal: #eef0f5;
+
+  --status-waiting: #926e00;
+  --status-busy: #007a60;
+  --status-idle: #5c6385;
+  --status-unknown: #898eae;
+  --status-error: #bf356c;
+
+  --host-0: #8a4fc2;
+  --host-1: #aa5030;
+  --host-2: #0d7590;
+  --host-3: #ab4492;
+}
+
+:root[data-palette="poimandres"].dark {
+  --background: #1b1e28;
+  --foreground: #e4f0fb;
+  --card: #212530;
+  --card-foreground: #e4f0fb;
+  --popover: #303340;
+  --popover-foreground: #e4f0fb;
+  --primary: #add7ff;
+  --primary-foreground: #1b1e28;
+  --secondary: #303340;
+  --secondary-foreground: #e4f0fb;
+  --muted: #303340;
+  --muted-foreground: #a6accd;
+  --dimmer: #767c9d;
+  --accent: #353e4d;
+  --accent-foreground: #e4f0fb;
+  --destructive: #d1689e;
+  --border: #313540;
+  --input: #3a3e49;
+  --ring: #586a81;
+  --terminal: #0c0e15;
+
+  --status-waiting: #fffac2;
+  --status-busy: #5de4c7;
+  --status-idle: #91b4d5;
+  --status-unknown: #566a7d;
+  --status-error: #d1689e;
+
+  --host-0: #c9a6ff;
+  --host-1: #f0b98a;
+  --host-2: #89ddff;
+  --host-3: #fcc5e9;
+}
+
+/* Rosé Pine: Dawn / main, iris primary; it has no green, so busy is a derived soft green. */
+:root[data-palette="rose-pine"] {
+  --background: #faf4ed;
+  --foreground: #4d486e;
+  --card: #f2e9e1;
+  --card-foreground: #4d486e;
+  --popover: #fffaf3;
+  --popover-foreground: #4d486e;
+  --primary: #76608e;
+  --primary-foreground: #ffffff;
+  --secondary: #ede7e4;
+  --secondary-foreground: #4d486e;
+  --muted: #ede7e4;
+  --muted-foreground: #696582;
+  --dimmer: #827d8f;
+  --accent: #e8e0e1;
+  --accent-foreground: #4d486e;
+  --destructive: #a05169;
+  --border: #dfdad9;
+  --input: #cecacd;
+  --ring: #b6a8bd;
+  --terminal: #f5efea;
+
+  --status-waiting: #a85f00;
+  --status-busy: #377747;
+  --status-idle: #6a6683;
+  --status-unknown: #918c9e;
+  --status-error: #a05169;
+
+  --host-0: #a25250;
+  --host-1: #286983;
+  --host-2: #76608e;
+  --host-3: #a05800;
+}
+
+:root[data-palette="rose-pine"].dark {
+  --background: #191724;
+  --foreground: #e0def4;
+  --card: #1f1d2e;
+  --card-foreground: #e0def4;
+  --popover: #26233a;
+  --popover-foreground: #e0def4;
+  --primary: #c4a7e7;
+  --primary-foreground: #191724;
+  --secondary: #26233a;
+  --secondary-foreground: #e0def4;
+  --muted: #26233a;
+  --muted-foreground: #908caa;
+  --dimmer: #716d8a;
+  --accent: #373046;
+  --accent-foreground: #e0def4;
+  --destructive: #eb6f92;
+  --border: #26233a;
+  --input: #403d52;
+  --ring: #5f5275;
+  --terminal: #0b0a12;
+
+  --status-waiting: #f6c177;
+  --status-busy: #95c99a;
+  --status-idle: #908caa;
+  --status-unknown: #6e6a86;
+  --status-error: #eb6f92;
+
+  --host-0: #ebbcba;
+  --host-1: #9ccfd8;
+  --host-2: #c4a7e7;
+  --host-3: #f6c177;
+}
+
+/* Selenized: light / dark, blue primary. */
+:root[data-palette="selenized"] {
+  --background: #fbf3db;
+  --foreground: #394c52;
+  --card: #ece3cc;
+  --card-foreground: #394c52;
+  --popover: #fdf8e9;
+  --popover-foreground: #394c52;
+  --primary: #0064c5;
+  --primary-foreground: #ffffff;
+  --secondary: #ece6d1;
+  --secondary-foreground: #394c52;
+  --muted: #ece6d1;
+  --muted-foreground: #53676d;
+  --dimmer: #757d7a;
+  --accent: #dde1db;
+  --accent-foreground: #394c52;
+  --destructive: #c91225;
+  --border: #e2d9c0;
+  --input: #d5cdb6;
+  --ring: #8aaed5;
+  --terminal: #f6eed7;
+
+  --status-waiting: #8a6700;
+  --status-busy: #2b7400;
+  --status-idle: #53676d;
+  --status-unknown: #888a81;
+  --status-error: #c91225;
+
+  --host-0: #7751b4;
+  --host-1: #aa4700;
+  --host-2: #007367;
+  --host-3: #b12f82;
+}
+
+:root[data-palette="selenized"].dark {
+  --background: #103c48;
+  --foreground: #dae8e9;
+  --card: #184956;
+  --card-foreground: #dae8e9;
+  --popover: #1d505e;
+  --popover-foreground: #dae8e9;
+  --primary: #66b5ff;
+  --primary-foreground: #103c48;
+  --secondary: #1d505e;
+  --secondary-foreground: #dae8e9;
+  --muted: #1d505e;
+  --muted-foreground: #adbcbc;
+  --dimmer: #839aa0;
+  --accent: #205269;
+  --accent-foreground: #dae8e9;
+  --destructive: #ff9083;
+  --border: #2d5b69;
+  --input: #2d5b69;
+  --ring: #357095;
+  --terminal: #062129;
+
+  --status-waiting: #dbb32d;
+  --status-busy: #7ec242;
+  --status-idle: #9ab5b6;
+  --status-unknown: #738a90;
+  --status-error: #ff9083;
+
+  --host-0: #c49dff;
+  --host-1: #fe9559;
+  --host-2: #41c7b9;
+  --host-3: #ff87d0;
+}
+
+/* Solarized: base3 / base03, blue primary, the eight accents for status and hosts. */
+:root[data-palette="solarized"] {
+  --background: #fdf6e3;
+  --foreground: #073642;
+  --card: #eee8d5;
+  --card-foreground: #073642;
+  --popover: #fffbf0;
+  --popover-foreground: #073642;
+  --primary: #006cb1;
+  --primary-foreground: #ffffff;
+  --secondary: #ebe7d7;
+  --secondary-foreground: #073642;
+  --muted: #ebe7d7;
+  --muted-foreground: #546970;
+  --dimmer: #708183;
+  --accent: #e0e4de;
+  --accent-foreground: #073642;
+  --destructive: #cc1d20;
+  --border: #e6dfc8;
+  --input: #d9d2bb;
+  --ring: #8eb1cd;
+  --terminal: #f6f1df;
+
+  --status-waiting: #936800;
+  --status-busy: #5e7000;
+  --status-idle: #566c74;
+  --status-unknown: #829090;
+  --status-error: #cc1d20;
+
+  --host-0: #5d60b2;
+  --host-1: #bc3c00;
+  --host-2: #00756d;
+  --host-3: #c22274;
+}
+
+:root[data-palette="solarized"].dark {
+  --background: #002b36;
+  --foreground: #eee8d5;
+  --card: #073642;
+  --card-foreground: #eee8d5;
+  --popover: #0a3d4a;
+  --popover-foreground: #eee8d5;
+  --primary: #3f9fe8;
+  --primary-foreground: #002b36;
+  --secondary: #0a3d4a;
+  --secondary-foreground: #eee8d5;
+  --muted: #0a3d4a;
+  --muted-foreground: #93a1a1;
+  --dimmer: #6e848d;
+  --accent: #084056;
+  --accent-foreground: #eee8d5;
+  --destructive: #ff675c;
+  --border: #0c4250;
+  --input: #164b59;
+  --ring: #195c81;
+  --terminal: #00161e;
+
+  --status-waiting: #b58900;
+  --status-busy: #8da218;
+  --status-idle: #8b9d9f;
+  --status-unknown: #60767d;
+  --status-error: #ff675c;
+
+  --host-0: #8a91e7;
+  --host-1: #f57243;
+  --host-2: #35a99f;
+  --host-3: #fd5fa5;
+}
+
+/* Sonokai: the official dark (default), blue primary; the light variant is derived. */
+:root[data-palette="sonokai"] {
+  --background: #f7f7f8;
+  --foreground: #2c2e34;
+  --card: #ececef;
+  --card-foreground: #2c2e34;
+  --popover: #ffffff;
+  --popover-foreground: #2c2e34;
+  --primary: #067495;
+  --primary-foreground: #ffffff;
+  --secondary: #e7e7e9;
+  --secondary-foreground: #2c2e34;
+  --muted: #e7e7e9;
+  --muted-foreground: #5b5f6b;
+  --dimmer: #7b808c;
+  --accent: #dbe6eb;
+  --accent-foreground: #2c2e34;
+  --destructive: #cb2551;
+  --border: #e0e1e2;
+  --input: #d5d6d8;
+  --ring: #8db5c6;
+  --terminal: #f1f1f3;
+
+  --status-waiting: #9b6900;
+  --status-busy: #3f7900;
+  --status-idle: #5f6470;
+  --status-unknown: #8c9098;
+  --status-error: #cb2551;
+
+  --host-0: #7454cf;
+  --host-1: #af4f15;
+  --host-2: #007878;
+  --host-3: #b43d7e;
+}
+
+:root[data-palette="sonokai"].dark {
+  --background: #2c2e34;
+  --foreground: #e2e2e3;
+  --card: #33353f;
+  --card-foreground: #e2e2e3;
+  --popover: #363944;
+  --popover-foreground: #e2e2e3;
+  --primary: #76cce0;
+  --primary-foreground: #2c2e34;
+  --secondary: #363944;
+  --secondary-foreground: #e2e2e3;
+  --muted: #363944;
+  --muted-foreground: #b0b3ba;
+  --dimmer: #818692;
+  --accent: #3b4a53;
+  --accent-foreground: #e2e2e3;
+  --destructive: #ff6c89;
+  --border: #3b3e48;
+  --input: #414550;
+  --ring: #4e707c;
+  --terminal: #17181c;
+
+  --status-waiting: #e7c664;
+  --status-busy: #9ed072;
+  --status-idle: #9a9ea8;
+  --status-unknown: #717788;
+  --status-error: #ff6c89;
+
+  --host-0: #b39df3;
+  --host-1: #f39660;
+  --host-2: #7bd8c8;
+  --host-3: #f38fbd;
+}
+
+/* Synthwave '84: the official dark, neon pink primary; the light variant is derived. */
+:root[data-palette="synthwave"] {
+  --background: #fbf6ff;
+  --foreground: #2a2139;
+  --card: #f2e9fa;
+  --card-foreground: #2a2139;
+  --popover: #ffffff;
+  --popover-foreground: #2a2139;
+  --primary: #b0198c;
+  --primary-foreground: #ffffff;
+  --secondary: #ebe5f0;
+  --secondary-foreground: #2a2139;
+  --muted: #ebe5f0;
+  --muted-foreground: #5a4f73;
+  --dimmer: #777eaf;
+  --accent: #f4dcf0;
+  --accent-foreground: #2a2139;
+  --destructive: #d01e37;
+  --border: #e4dee9;
+  --input: #d8d2df;
+  --ring: #dc92c5;
+  --terminal: #f5f0fa;
+
+  --status-waiting: #ac5f00;
+  --status-busy: #007b4d;
+  --status-idle: #5f5f8f;
+  --status-unknown: #918caa;
+  --status-error: #d01e37;
+
+  --host-0: #6a3fd1;
+  --host-1: #ba4306;
+  --host-2: #00777c;
+  --host-3: #c12e79;
+}
+
+:root[data-palette="synthwave"].dark {
+  --background: #262335;
+  --foreground: #f4eefa;
+  --card: #2a2139;
+  --card-foreground: #f4eefa;
+  --popover: #34294f;
+  --popover-foreground: #f4eefa;
+  --primary: #ff7edb;
+  --primary-foreground: #262335;
+  --secondary: #34294f;
+  --secondary-foreground: #f4eefa;
+  --muted: #34294f;
+  --muted-foreground: #b6b1d6;
+  --dimmer: #848bbd;
+  --accent: #4d3553;
+  --accent-foreground: #f4eefa;
+  --destructive: #ff4651;
+  --border: #3a3152;
+  --input: #463a61;
+  --ring: #814b7b;
+  --terminal: #13111d;
+
+  --status-waiting: #fede5d;
+  --status-busy: #72f1b8;
+  --status-idle: #9a9ac4;
+  --status-unknown: #696388;
+  --status-error: #ff4651;
+
+  --host-0: #36f9f6;
+  --host-1: #f97e72;
+  --host-2: #b893ce;
+  --host-3: #ffcf7a;
+}
+
+/* Tokyo Night: Day / Night, blue primary. */
+:root[data-palette="tokyo-night"] {
+  --background: #e1e2e7;
+  --foreground: #173a96;
+  --card: #d6d8df;
+  --card-foreground: #173a96;
+  --popover: #e9e9ed;
+  --popover-foreground: #173a96;
+  --primary: #005ac3;
+  --primary-foreground: #ffffff;
+  --secondary: #d2d6e2;
+  --secondary-foreground: #173a96;
+  --muted: #d2d6e2;
+  --muted-foreground: #4a5995;
+  --dimmer: #697198;
+  --accent: #c6d1e4;
+  --accent-foreground: #173a96;
+  --destructive: #be003c;
+  --border: #c4c8da;
+  --input: #b6bcd2;
+  --ring: #7ba0d9;
+  --terminal: #dbdee5;
+
+  --status-waiting: #806032;
+  --status-busy: #4b672b;
+  --status-idle: #555c85;
+  --status-unknown: #7c809e;
+  --status-error: #be003c;
+
+  --host-0: #7d33d1;
+  --host-1: #994600;
+  --host-2: #006c55;
+  --host-3: #bc0054;
+}
+
+:root[data-palette="tokyo-night"].dark {
+  --background: #1a1b26;
+  --foreground: #c0caf5;
+  --card: #1f2030;
+  --card-foreground: #c0caf5;
+  --popover: #292e42;
+  --popover-foreground: #c0caf5;
+  --primary: #7aa2f7;
+  --primary-foreground: #1a1b26;
+  --secondary: #292e42;
+  --secondary-foreground: #c0caf5;
+  --muted: #292e42;
+  --muted-foreground: #a9b1d6;
+  --dimmer: #737aa2;
+  --accent: #2c334a;
+  --accent-foreground: #c0caf5;
+  --destructive: #f7768e;
+  --border: #292e42;
+  --input: #3b4261;
+  --ring: #43537c;
+  --terminal: #0c0c13;
+
+  --status-waiting: #e0af68;
+  --status-busy: #9ece6a;
+  --status-idle: #828bb8;
+  --status-unknown: #59628d;
+  --status-error: #f7768e;
+
+  --host-0: #bb9af7;
+  --host-1: #ff9e64;
+  --host-2: #7dcfff;
+  --host-3: #ff9fd0;
+}
+
+/* Tomorrow: Tomorrow / Tomorrow Night, blue primary. */
+:root[data-palette="tomorrow"] {
+  --background: #ffffff;
+  --foreground: #4d4d4c;
+  --card: #f5f5f5;
+  --card-foreground: #4d4d4c;
+  --popover: #ffffff;
+  --popover-foreground: #4d4d4c;
+  --primary: #4271ae;
+  --primary-foreground: #ffffff;
+  --secondary: #f1f1f1;
+  --secondary-foreground: #4d4d4c;
+  --muted: #f1f1f1;
+  --muted-foreground: #6b6b6a;
+  --dimmer: #848682;
+  --accent: #e5ecf5;
+  --accent-foreground: #4d4d4c;
+  --destructive: #c82829;
+  --border: #e0e0e0;
+  --input: #d6d6d6;
+  --ring: #9eb7d8;
+  --terminal: #fafafa;
+
+  --status-waiting: #c35a00;
+  --status-busy: #5f7900;
+  --status-idle: #6b6b6a;
+  --status-unknown: #949591;
+  --status-error: #c82829;
+
+  --host-0: #8959a8;
+  --host-1: #986700;
+  --host-2: #177c82;
+  --host-3: #b5427a;
+}
+
+:root[data-palette="tomorrow"].dark {
+  --background: #1d1f21;
+  --foreground: #c5c8c6;
+  --card: #232528;
+  --card-foreground: #c5c8c6;
+  --popover: #282a2e;
+  --popover-foreground: #c5c8c6;
+  --primary: #81a2be;
+  --primary-foreground: #1d1f21;
+  --secondary: #282a2e;
+  --secondary-foreground: #c5c8c6;
+  --muted: #282a2e;
+  --muted-foreground: #a7aaa8;
+  --dimmer: #969896;
+  --accent: #2f363d;
+  --accent-foreground: #c5c8c6;
+  --destructive: #d46d6d;
+  --border: #2f3236;
+  --input: #373b41;
+  --ring: #475662;
+  --terminal: #0e0f10;
+
+  --status-waiting: #f0c674;
+  --status-busy: #b5bd68;
+  --status-idle: #8a9099;
+  --status-unknown: #64676b;
+  --status-error: #d46d6d;
+
+  --host-0: #b294bb;
+  --host-1: #de935f;
+  --host-2: #8abeb7;
+  --host-3: #d99ab8;
+}
+
+/* Vesper: the official dark (near-black, peach + mint); the light variant is derived. */
+:root[data-palette="vesper"] {
+  --background: #fafaf9;
+  --foreground: #101010;
+  --card: #f1f0ee;
+  --card-foreground: #101010;
+  --popover: #ffffff;
+  --popover-foreground: #101010;
+  --primary: #a35a14;
+  --primary-foreground: #ffffff;
+  --secondary: #e7e7e6;
+  --secondary-foreground: #101010;
+  --muted: #e7e7e6;
+  --muted-foreground: #5c5c5c;
+  --dimmer: #7d7d7d;
+  --accent: #f0e5dc;
+  --accent-foreground: #101010;
+  --destructive: #c4352f;
+  --border: #dfdfde;
+  --input: #d2d2d1;
+  --ring: #d1a98c;
+  --terminal: #f3f3f2;
+
+  --status-waiting: #9a6400;
+  --status-busy: #197b5f;
+  --status-idle: #5f6266;
+  --status-unknown: #919191;
+  --status-error: #c4352f;
+
+  --host-0: #6a54b8;
+  --host-1: #b44e1a;
+  --host-2: #1d797f;
+  --host-3: #b0457d;
+}
+
+:root[data-palette="vesper"].dark {
+  --background: #101010;
+  --foreground: #ffffff;
+  --card: #161616;
+  --card-foreground: #ffffff;
+  --popover: #1c1c1c;
+  --popover-foreground: #ffffff;
+  --primary: #ffc799;
+  --primary-foreground: #101010;
+  --secondary: #1c1c1c;
+  --secondary-foreground: #ffffff;
+  --muted: #1c1c1c;
+  --muted-foreground: #a0a0a0;
+  --dimmer: #7e7e7e;
+  --accent: #382f28;
+  --accent-foreground: #ffffff;
+  --destructive: #ff8080;
+  --border: #232323;
+  --input: #2c2c2c;
+  --ring: #705a49;
+  --terminal: #060606;
+
+  --status-waiting: #ffd27a;
+  --status-busy: #99ffe4;
+  --status-idle: #9a9ea4;
+  --status-unknown: #5c5c5c;
+  --status-error: #ff8080;
+
+  --host-0: #c3b6ff;
+  --host-1: #ffab8a;
+  --host-2: #8fdcf0;
+  --host-3: #f5a3cf;
+}
+
+/* Zenburn: the official dark, blue primary; the light variant is derived. */
+:root[data-palette="zenburn"] {
+  --background: #f5f5ec;
+  --foreground: #3f3f3f;
+  --card: #ebebdf;
+  --card-foreground: #3f3f3f;
+  --popover: #fbfbf5;
+  --popover-foreground: #3f3f3f;
+  --primary: #387376;
+  --primary-foreground: #ffffff;
+  --secondary: #e7e7df;
+  --secondary-foreground: #3f3f3f;
+  --muted: #e7e7df;
+  --muted-foreground: #5f5f5f;
+  --dimmer: #7f7f72;
+  --accent: #dce3dc;
+  --accent-foreground: #3f3f3f;
+  --destructive: #a84444;
+  --border: #e1e1d9;
+  --input: #d7d7d0;
+  --ring: #96b2af;
+  --terminal: #f0f0e7;
+
+  --status-waiting: #98681c;
+  --status-busy: #497449;
+  --status-idle: #666670;
+  --status-unknown: #8f8f83;
+  --status-error: #a84444;
+
+  --host-0: #8a4f7a;
+  --host-1: #9a5a2f;
+  --host-2: #277383;
+  --host-3: #6a5aa0;
+}
+
+:root[data-palette="zenburn"].dark {
+  --background: #3f3f3f;
+  --foreground: #eeeee1;
+  --card: #464646;
+  --card-foreground: #eeeee1;
+  --popover: #4f4f4f;
+  --popover-foreground: #eeeee1;
+  --primary: #8cd0d3;
+  --primary-foreground: #3f3f3f;
+  --secondary: #4f4f4f;
+  --secondary-foreground: #eeeee1;
+  --muted: #4f4f4f;
+  --muted-foreground: #bfbfaf;
+  --dimmer: #9f9f8f;
+  --accent: #4f5a5a;
+  --accent-foreground: #eeeee1;
+  --destructive: #f39d9d;
+  --border: #4f4f4f;
+  --input: #5f5f5f;
+  --ring: #627d7e;
+  --terminal: #232323;
+
+  --status-waiting: #f0dfaf;
+  --status-busy: #9fc59f;
+  --status-idle: #b2b2c2;
+  --status-unknown: #8a8a8a;
+  --status-error: #f39d9d;
+
+  --host-0: #eb9ad1;
+  --host-1: #dfaf8f;
+  --host-2: #93e0e3;
+  --host-3: #b8b0f0;
+}
+
+/* Derived tokens — computed from each palette's tokens above, so every palette (light and dark) gets
+   the same layering without a value of its own (palettes.test.ts checks only the palette tokens):
+   surfaces   background (the page) → panel (sidebar, board columns, bars) → surface (cards: `bg-card`)
+              → popover (menus, dialogs); lifted: the chosen segment of a segmented control. In light a
+              card sits just above the page and gets its lift from the shadow; in dark each step is
+              lighter. Text on them keeps the palette's contrast: surface and panel are mixes of the two
+              tested surfaces (background, card).
+   hairline   the 1px ring of a card / a quiet divider, from the palette's border.
+   shadow     tints for the elevation scale (@theme: shadow-card / raised / overlay, xs … 2xl),
+              the palette's ink in light, plain black in dark (plus a faint top highlight).
+   motion     durations: fast (hover, press), base (most state changes), slow (enter / exit). */
+html {
+  --dur-fast: 120ms;
+  --dur-base: 180ms;
+  --dur-slow: 260ms;
+
+  --surface: color-mix(in oklab, var(--card) 18%, var(--background));
+  --panel: var(--card);
+  --lifted: var(--popover);
+  --hairline: color-mix(in oklab, var(--border) 88%, transparent);
+  --hairline-strong: color-mix(in oklab, var(--border), var(--foreground) 10%);
+  --highlight: transparent;
+  --shadow-tint-1: color-mix(in oklab, var(--foreground) 5%, transparent);
+  --shadow-tint-2: color-mix(in oklab, var(--foreground) 8%, transparent);
+  --shadow-tint-3: color-mix(in oklab, var(--foreground) 14%, transparent);
+  /* The desktop frame (sidebar + the gutter round the content pane): the panel tint. */
+  --frame: color-mix(in oklab, var(--card) 85%, var(--background));
+  /* Edges for floating things: a whisper of the ink, so a card holds its shape on any page. */
+  --edge: color-mix(in oklab, var(--foreground) 5%, transparent);
+  --edge-strong: color-mix(in oklab, var(--border) 55%, transparent);
+  --fill: color-mix(in oklab, var(--foreground) 5.5%, transparent);
+  --fill-hover: color-mix(in oklab, var(--foreground) 4%, transparent);
+  --fill-strong: color-mix(in oklab, var(--foreground) 9%, transparent);
+  --seg: var(--popover);
+  --float: var(--surface);
+  --session: color-mix(in oklab, var(--popover) 70%, var(--background));
+  --session-hover: color-mix(in oklab, var(--session), var(--foreground) 3%);
+  --session-edge: color-mix(in oklab, var(--foreground) 30%, var(--frame));
+}
+html.dark {
+  --surface: var(--card);
+  --panel: color-mix(in oklab, var(--card) 70%, var(--background));
+  --lifted: color-mix(in oklab, var(--popover), var(--foreground) 7%);
+  --hairline: color-mix(in oklab, var(--border) 80%, transparent);
+  --hairline-strong: color-mix(in oklab, var(--border), var(--foreground) 12%);
+  --highlight: color-mix(in oklab, var(--foreground) 4%, transparent);
+  --shadow-tint-1: rgb(0 0 0 / 0.22);
+  --shadow-tint-2: rgb(0 0 0 / 0.32);
+  --shadow-tint-3: rgb(0 0 0 / 0.5);
+  --frame: color-mix(in oklab, var(--card), var(--foreground) 2.5%);
+  --edge: color-mix(in oklab, var(--foreground) 5%, transparent);
+  --edge-strong: color-mix(in oklab, var(--foreground) 8%, transparent);
+  --fill: color-mix(in oklab, var(--foreground) 7%, transparent);
+  --fill-hover: color-mix(in oklab, var(--foreground) 5%, transparent);
+  --fill-strong: color-mix(in oklab, var(--foreground) 11%, transparent);
+  --seg: color-mix(in oklab, var(--foreground) 15%, var(--card));
+  --float: color-mix(in oklab, var(--card), var(--foreground) 5%);
+  --session: color-mix(in oklab, var(--card), var(--foreground) 6%);
+  --session-hover: color-mix(in oklab, var(--card), var(--foreground) 9%);
+  --session-edge: color-mix(in oklab, var(--foreground) 28%, var(--frame));
+}
+
+/* A sticky bar that gets its hairline only once the page scrolls under it (scroll-driven, no JS);
+   browsers without scroll timelines keep a transparent edge. */
+@keyframes fleet-scroll-edge {
+  from { border-bottom-color: transparent; }
+  to { border-bottom-color: var(--hairline); }
+}
+@utility scroll-edge {
+  border-bottom: 1px solid transparent;
+  @supports (animation-timeline: scroll()) {
+    animation: fleet-scroll-edge linear both;
+    animation-timeline: scroll(root block);
+    animation-range: 0 24px;
+  }
+}
+
 /* Safe-area padding (notch / home indicator) for a standalone PWA. */
 @utility pt-safe {
   padding-top: env(safe-area-inset-top, 0px);
@@ -280,6 +3336,10 @@
 @utility px-safe {
   padding-left: env(safe-area-inset-left, 0px);
   padding-right: env(safe-area-inset-right, 0px);
+}
+/* Fluid side gutter for the phone / tablet layout: 12px on a phone, growing with the width to 20px. */
+@utility px-gutter {
+  padding-inline: clamp(0.75rem, 0.4rem + 1.6vw, 1.25rem);
 }
 /* Full app height: 100dvh, or the visual viewport (keyboard-aware) — see lib/viewport.ts. */
 @utility h-app {
@@ -309,6 +3369,28 @@
   body {
     @apply bg-background text-foreground antialiased;
     overscroll-behavior-y: none;
+    font-feature-settings: "kern";
+    font-optical-sizing: auto;
+  }
+  h1,
+  h2,
+  h3 {
+    font-family: var(--font-heading);
+    letter-spacing: var(--tracking-heading);
+  }
+  ::selection {
+    background: color-mix(in oklab, var(--primary) 26%, transparent);
+  }
+  /* Quiet scrollbars where the platform draws classic ones. */
+  html {
+    scrollbar-color: color-mix(in oklab, var(--foreground) 20%, transparent) transparent;
+  }
+  /* Interactive things ease between states (hover, press, focus) instead of snapping; only colour,
+     shadow and opacity — never layout. Elements with their own transition-* utility keep theirs. */
+  :where(a[href], button, [role="button"], [role="tab"], [role="menuitem"], [role="option"], summary, input, textarea, select) {
+    transition-property: color, background-color, border-color, outline-color, text-decoration-color, fill, stroke, box-shadow, opacity;
+    transition-duration: var(--dur-fast);
+    transition-timing-function: var(--ease-standard);
   }
   button:not(:disabled),
   [role="button"]:not(:disabled) {
@@ -319,6 +3401,58 @@
   textarea,
   select {
     font-size: max(16px, 1em);
+  }
+}
+
+/* The session header with a wash (lib/cardTone.ts, lib/styles.ts HEAD_WASH): the element carries
+   the wash lightness, strengths and text pulls per mode as inline vars (--wash-ll / --wash-ld, --wash-pl / --wash-pd,
+   …); --wash-pin is the wash colour (--wash) at the mode's lightness. This picks the mode's values and
+   pulls the text tokens inside toward the mode's ink (black / white), so text keeps its contrast on the wash. The
+   pulled values are computed on the element and set on its children (a token can't be mixed from itself). The
+   busy / waiting / idle colours stay as they are (the status dot); their text reads the pulled --tone-status-*
+   (lib/styles.ts STATUS_TEXT, CTX_TEXT). */
+@layer base {
+  [data-wash] {
+    --tone-ink: #000;
+    --wash-l: var(--wash-ll);
+    --wash-pin: oklab(from var(--wash) var(--wash-l) a b);
+    --wash-p: var(--wash-pl);
+    --tone-pull: var(--pull-l);
+    --tone-pull-fg: var(--pull-fgl);
+    --tone-fg: color-mix(in oklab, var(--tone-ink) var(--tone-pull-fg), var(--foreground));
+    --tone-cfg: color-mix(in oklab, var(--tone-ink) var(--tone-pull-fg), var(--card-foreground));
+    --tone-muted-foreground: color-mix(in oklab, var(--tone-ink) var(--tone-pull), var(--muted-foreground));
+    --tone-dimmer: color-mix(in oklab, var(--tone-ink) var(--tone-pull), var(--dimmer));
+    --tone-primary: color-mix(in oklab, var(--tone-ink) var(--tone-pull), var(--primary));
+    --tone-status-waiting: color-mix(in oklab, var(--tone-ink) var(--tone-pull), var(--status-waiting));
+    --tone-status-busy: color-mix(in oklab, var(--tone-ink) var(--tone-pull), var(--status-busy));
+    --tone-status-idle: color-mix(in oklab, var(--tone-ink) var(--tone-pull), var(--status-idle));
+    --tone-status-unknown: color-mix(in oklab, var(--tone-ink) var(--tone-pull), var(--status-unknown));
+    --tone-status-error: color-mix(in oklab, var(--tone-ink) var(--tone-pull), var(--status-error));
+    --tone-host-0: color-mix(in oklab, var(--tone-ink) var(--tone-pull), var(--host-0));
+    --tone-host-1: color-mix(in oklab, var(--tone-ink) var(--tone-pull), var(--host-1));
+    --tone-host-2: color-mix(in oklab, var(--tone-ink) var(--tone-pull), var(--host-2));
+    --tone-host-3: color-mix(in oklab, var(--tone-ink) var(--tone-pull), var(--host-3));
+  }
+  .dark [data-wash] {
+    --tone-ink: #fff;
+    --wash-l: var(--wash-ld);
+    --wash-p: var(--wash-pd);
+    --tone-pull: var(--pull-d);
+    --tone-pull-fg: var(--pull-fgd);
+  }
+  [data-wash] > * {
+    --foreground: var(--tone-fg);
+    --card-foreground: var(--tone-cfg);
+    --muted-foreground: var(--tone-muted-foreground);
+    --dimmer: var(--tone-dimmer);
+    --primary: var(--tone-primary);
+    --status-unknown: var(--tone-status-unknown);
+    --status-error: var(--tone-status-error);
+    --host-0: var(--tone-host-0);
+    --host-1: var(--tone-host-1);
+    --host-2: var(--tone-host-2);
+    --host-3: var(--tone-host-3);
   }
 }
 
@@ -342,6 +3476,74 @@
 /* The outbox's countdown ring (components/session/OutboxBubbles.tsx): full → empty. */
 @keyframes fleet-countdown {
   to { stroke-dashoffset: var(--ring-len); }
+}
+
+/* Something new arriving (a row, a card, a section, a bubble): a short rise + fade. Transform and
+   opacity only, so nothing around it moves. */
+@keyframes fleet-enter {
+  from { opacity: 0; transform: translateY(4px) scale(0.995); }
+  to { opacity: 1; transform: none; }
+}
+@keyframes fleet-fade {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+/* Skeleton shimmer: a soft highlight sweeping across (background-position only). */
+@keyframes fleet-shimmer {
+  from { background-position: 150% 0; }
+  to { background-position: -50% 0; }
+}
+@utility shimmer {
+  background-image: linear-gradient(90deg, transparent 0%, color-mix(in oklab, var(--foreground) 6%, transparent) 50%, transparent 100%);
+  background-size: 200% 100%;
+  background-repeat: no-repeat;
+  animation: var(--animate-shimmer);
+}
+
+/* Route changes (lib/viewTransition.ts): a quick cross-fade between screens; on the phone layout,
+   where a screen is the whole page, the new one also rises in a few pixels. */
+::view-transition-old(root),
+::view-transition-new(root) {
+  mix-blend-mode: normal;
+}
+/* The old screen stays put underneath; the new one fades in over it (no see-through dip). */
+::view-transition-old(root) {
+  animation: none;
+}
+::view-transition-new(root) {
+  animation: fleet-fade var(--dur-base) var(--ease-standard) both;
+}
+@media (max-width: 1023.98px) {
+  ::view-transition-new(root) {
+    animation: fleet-vt-in var(--dur-slow) var(--ease-out) both;
+  }
+}
+@keyframes fleet-vt-in {
+  from { opacity: 0; transform: translateY(8px); }
+}
+
+/* Reduced motion: no movement anywhere — transitions and animations collapse to an instant change
+   (radix / vaul still get their animationend). Spinners keep turning: they say "busy", not decorate. */
+@media (prefers-reduced-motion: reduce) {
+  *:not(.animate-spin),
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    animation-delay: 0ms !important;
+    transition-duration: 0.01ms !important;
+    transition-delay: 0ms !important;
+    scroll-behavior: auto !important;
+  }
+  ::view-transition-group(*),
+  ::view-transition-old(*),
+  ::view-transition-new(*) {
+    animation: none !important;
+  }
+  .animate-dot,
+  .shimmer {
+    animation: none !important;
+  }
 }
 
 /* Horizontally scrolling chip rows. */
@@ -373,4 +3575,571 @@
 }
 :root[data-shell="desktop"]:not([data-fullscreen="true"]) .titlebar-rail {
   padding-top: var(--titlebar-height, 56px);
+}
+
+.madrid-mourinho {
+  animation: madrid-mou-in 0.7s var(--ease-spring) backwards;
+}
+
+.madrid-mou-figure {
+  transform-origin: 50% 100%;
+  animation: madrid-mou-sway 2.8s ease-in-out 0.7s infinite;
+}
+
+.madrid-bubble {
+  position: relative;
+  animation: madrid-bubble-in 0.45s var(--ease-spring) 0.35s backwards;
+}
+
+.madrid-bubble::after {
+  content: "";
+  position: absolute;
+  right: -6px;
+  bottom: 18px;
+  width: 14px;
+  height: 14px;
+  background: var(--popover);
+  transform: rotate(45deg);
+  border-radius: 2px;
+}
+
+@keyframes madrid-mou-in {
+  from {
+    transform: translateY(110%);
+  }
+}
+
+@keyframes madrid-bubble-in {
+  from {
+    opacity: 0;
+    transform: scale(0.6) translateY(12px);
+  }
+}
+
+@keyframes madrid-mou-sway {
+  0%,
+  100% {
+    transform: rotate(-2deg);
+  }
+  50% {
+    transform: rotate(2deg);
+  }
+}
+
+.squad-pitch {
+  color: rgb(255 255 255 / 0.7);
+  background: repeating-linear-gradient(180deg, #2f7a3c 0 7.14%, #2a6f36 7.14% 14.28%);
+}
+
+.dark .squad-pitch {
+  color: rgb(255 255 255 / 0.5);
+  background: repeating-linear-gradient(180deg, #1d4d27 0 7.14%, #1a4523 7.14% 14.28%);
+}
+
+.squad-empty {
+  color: rgb(255 255 255 / 0.85);
+  border: 1.5px dashed rgb(255 255 255 / 0.55);
+  background: rgb(0 0 0 / 0.12);
+  transition: transform var(--dur-base) var(--ease-standard), background-color var(--dur-base) var(--ease-standard);
+}
+
+.squad-empty-ready {
+  border-color: #febe10;
+  color: #febe10;
+  cursor: pointer;
+}
+
+.squad-slot-over .squad-empty {
+  transform: scale(1.15);
+  background: rgb(254 190 16 / 0.3);
+  border-color: #febe10;
+}
+
+.squad-slot-over > button {
+  transform: scale(1.06);
+}
+
+.squad-name {
+  color: #ffffff;
+  background: rgb(17 13 29 / 0.78);
+  box-shadow: 0 1px 4px rgb(0 0 0 / 0.3);
+}
+
+.squad-tasks {
+  color: rgb(255 255 255 / 0.92);
+  background: rgb(17 13 29 / 0.55);
+}
+
+.squad-status {
+  padding: 0 0.3rem;
+  border-radius: 0.25rem;
+  background: rgb(17 13 29 / 0.6);
+}
+
+.madrid-goal {
+  animation: madrid-goal-in 0.6s var(--ease-spring) backwards, madrid-goal-out 0.5s ease-in 3.7s forwards;
+}
+
+.madrid-goal-text {
+  color: #febe10;
+  -webkit-text-stroke: 2px #5b2a86;
+  text-shadow: 0 6px 24px rgb(0 0 0 / 0.45);
+  animation: madrid-goal-shake 0.5s ease-in-out 0.6s 3;
+}
+
+.madrid-goal-ball {
+  animation: madrid-goal-ball 0.9s var(--ease-spring) backwards, madrid-roll 1.2s linear 0.9s infinite;
+}
+
+@keyframes madrid-goal-in {
+  from {
+    opacity: 0;
+    transform: scale(0.3);
+  }
+}
+
+@keyframes madrid-goal-out {
+  to {
+    opacity: 0;
+    transform: scale(1.15);
+  }
+}
+
+@keyframes madrid-goal-shake {
+  0%,
+  100% {
+    transform: rotate(0) scale(1);
+  }
+  25% {
+    transform: rotate(-3deg) scale(1.06);
+  }
+  75% {
+    transform: rotate(3deg) scale(1.06);
+  }
+}
+
+@keyframes madrid-goal-ball {
+  from {
+    transform: translate(-60vw, 30vh) rotate(-720deg);
+  }
+}
+
+.madrid-sub {
+  animation: madrid-sub-in 0.5s var(--ease-spring) backwards;
+}
+
+/* The board walks off before it unmounts (SUB_EXIT_MS in MadridMatch.tsx, a beat longer so it is fully gone). */
+.madrid-sub-leaving {
+  animation: madrid-sub-out 0.35s ease-in forwards;
+}
+
+.madrid-sub-board {
+  background: #0b0b10;
+  border: 3px solid #2a2a35;
+  box-shadow: 0 10px 30px rgb(0 0 0 / 0.5), inset 0 0 12px rgb(0 0 0 / 0.8);
+}
+
+.madrid-sub-in {
+  color: #3dff6e;
+  text-shadow: 0 0 8px rgb(61 255 110 / 0.7);
+}
+
+.madrid-sub-out {
+  color: #ff3b3b;
+  text-shadow: 0 0 8px rgb(255 59 59 / 0.7);
+}
+
+.madrid-sub-number {
+  letter-spacing: 0.05em;
+  animation: madrid-led 1s steps(2, jump-none) infinite;
+}
+
+@keyframes madrid-sub-in {
+  from {
+    transform: translateY(140%) rotate(-6deg);
+  }
+}
+
+@keyframes madrid-sub-out {
+  to {
+    opacity: 0;
+    transform: translateY(40%);
+  }
+}
+
+@keyframes madrid-led {
+  50% {
+    opacity: 0.55;
+  }
+}
+
+.madrid-red-card {
+  width: 38%;
+  height: 52%;
+  min-width: 5px;
+  min-height: 7px;
+  border-radius: 1px;
+  background: #e5262b;
+  box-shadow: 0 0 0 1px rgb(0 0 0 / 0.25), 0 1px 2px rgb(0 0 0 / 0.4);
+  transform: rotate(12deg);
+}
+
+.madrid-score-digits {
+  color: color-mix(in oklab, #febe10 80%, var(--foreground));
+}
+
+.squad-goals {
+  color: #ffffff;
+  background: rgb(17 13 29 / 0.78);
+}
+
+.madrid-ancelotti {
+  animation: madrid-mou-in 0.8s var(--ease-spring) backwards;
+}
+
+.madrid-ancelotti-figure {
+  transform-origin: 50% 100%;
+  animation: madrid-eyebrow 5s ease-in-out 1s infinite;
+}
+
+.madrid-bubble-left {
+  position: relative;
+  text-align: left;
+  animation: madrid-bubble-in 0.45s var(--ease-spring) 0.5s backwards;
+}
+
+.madrid-bubble-left::after {
+  content: "";
+  position: absolute;
+  left: -6px;
+  bottom: 14px;
+  width: 14px;
+  height: 14px;
+  background: var(--popover);
+  transform: rotate(45deg);
+  border-radius: 2px;
+}
+
+@keyframes madrid-eyebrow {
+  0%,
+  80%,
+  100% {
+    transform: rotate(0);
+  }
+  85% {
+    transform: rotate(-3deg) translateY(-3px);
+  }
+  92% {
+    transform: rotate(-3deg) translateY(-3px);
+  }
+}
+
+.madrid-goal-scrim {
+  background: radial-gradient(circle at 50% 50%, rgb(17 13 29 / 0.82) 0, rgb(17 13 29 / 0.55) 45%, rgb(17 13 29 / 0) 80%);
+  animation: madrid-scrim 4.2s ease-in-out forwards;
+}
+
+@keyframes madrid-scrim {
+  0% {
+    opacity: 0;
+  }
+  10%,
+  85% {
+    opacity: 1;
+  }
+  100% {
+    opacity: 0;
+  }
+}
+
+.madrid-mini-card {
+  width: 0.5rem;
+  height: 0.7rem;
+  border-radius: 1.5px;
+  transform: rotate(10deg);
+  box-shadow: 0 0 0 1px rgb(0 0 0 / 0.2), 0 1px 2px rgb(0 0 0 / 0.3);
+}
+
+.madrid-mini-card-yellow {
+  background: #ffd60a;
+}
+
+.madrid-mini-card-red {
+  background: #e5262b;
+}
+
+.madrid-stopwatch {
+  display: inline-grid;
+  place-items: center;
+  font-size: 0.75rem;
+  line-height: 1;
+  animation: madrid-card 1.6s ease-in-out infinite;
+}
+
+.madrid-verdict-goal {
+  color: color-mix(in oklab, #febe10 80%, var(--foreground));
+  background: color-mix(in oklab, #febe10 14%, transparent);
+}
+
+.madrid-verdict-var {
+  color: var(--muted-foreground);
+  background: var(--fill);
+}
+
+.madrid-live {
+  color: color-mix(in oklab, #e5262b 85%, var(--foreground));
+  background: color-mix(in oklab, #e5262b 14%, transparent);
+}
+
+.madrid-live-dot {
+  background: currentColor;
+  animation: madrid-led 1s steps(2, jump-none) infinite;
+}
+
+.madrid-ht {
+  color: color-mix(in oklab, #ffd60a 75%, var(--foreground));
+  background: color-mix(in oklab, #ffd60a 14%, transparent);
+}
+
+.madrid-board {
+  background:
+    radial-gradient(ellipse 60% 22rem at 50% 0, color-mix(in oklab, #5b2a86 9%, transparent), transparent),
+    url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 105 68' fill='none' stroke='%23e6e0f5' stroke-width='0.3'><rect x='1' y='1' width='103' height='66' rx='0.6'/><path d='M52.5 1v66M1 13.85h16.5v40.3H1M104 13.85H87.5v40.3H104M1 24.85h5.5v18.3H1M104 24.85h-5.5v18.3H104M17.5 26.7a9.15 9.15 0 0 1 0 14.6M87.5 26.7a9.15 9.15 0 0 0 0 14.6'/><circle cx='52.5' cy='34' r='9.15'/></svg>") center 62% / min(94%, 1600px) auto no-repeat;
+}
+
+.dark .madrid-board {
+  background:
+    radial-gradient(ellipse 60% 22rem at 50% 0, color-mix(in oklab, #5b2a86 22%, transparent), transparent),
+    url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 105 68' fill='none' stroke='%23231e3a' stroke-width='0.3'><rect x='1' y='1' width='103' height='66' rx='0.6'/><path d='M52.5 1v66M1 13.85h16.5v40.3H1M104 13.85H87.5v40.3H104M1 24.85h5.5v18.3H1M104 24.85h-5.5v18.3H104M17.5 26.7a9.15 9.15 0 0 1 0 14.6M87.5 26.7a9.15 9.15 0 0 0 0 14.6'/><circle cx='52.5' cy='34' r='9.15'/></svg>") center 62% / min(94%, 1600px) auto no-repeat;
+}
+
+.madrid-fixture {
+  position: relative;
+  overflow: hidden;
+  background-image: linear-gradient(180deg, color-mix(in oklab, #5b2a86 6%, transparent), transparent 4rem);
+}
+
+.dark .madrid-fixture {
+  background-image: linear-gradient(180deg, color-mix(in oklab, #7b4bb0 10%, transparent), transparent 4rem);
+}
+
+.madrid-fixture::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  left: 1.25rem;
+  right: 1.25rem;
+  height: 1px;
+  background: linear-gradient(90deg, transparent, color-mix(in oklab, #febe10 65%, transparent), transparent);
+  pointer-events: none;
+}
+
+.madrid-fixture::after {
+  content: "";
+  position: absolute;
+  right: 0.75rem;
+  top: 50%;
+  width: 2.5rem;
+  height: 3.25rem;
+  transform: translateY(-50%);
+  background: url("/real-madrid-crest.svg") center / contain no-repeat;
+  opacity: 0.05;
+  pointer-events: none;
+}
+
+.dark .madrid-fixture::after {
+  opacity: 0.08;
+}
+
+.madrid-count {
+  display: inline-grid;
+  place-items: center;
+  min-width: 1.375rem;
+  height: 1.125rem;
+  padding: 0 0.375rem;
+  border-radius: 9999px;
+  font-size: 0.6875rem;
+  font-weight: 700;
+  color: #7a5600;
+  background: color-mix(in oklab, #febe10 22%, transparent);
+}
+
+.dark .madrid-count {
+  color: color-mix(in oklab, #febe10 85%, var(--foreground));
+  background: color-mix(in oklab, #febe10 15%, transparent);
+}
+
+.madrid-competition {
+  color: var(--muted-foreground);
+}
+
+.madrid-match-state {
+  background: color-mix(in oklab, currentColor 20%, transparent);
+}
+
+/* Fixture cards hold their own edge against the pitch; a card a live session frames keeps its green border. */
+.madrid-fixture {
+  background-color: color-mix(in oklab, var(--card) 35%, var(--background));
+}
+
+.madrid-fixture:not([data-live]) {
+  border-color: color-mix(in oklab, var(--border), var(--foreground) 10%);
+}
+
+.dark .madrid-fixture {
+  background-color: color-mix(in oklab, var(--card), var(--foreground) 8%);
+}
+
+.dark .madrid-fixture:not([data-live]) {
+  border-color: color-mix(in oklab, var(--foreground) 13%, transparent);
+}
+
+.madrid-match-notStarted {
+  color: var(--muted-foreground);
+}
+
+.madrid-match-started {
+  color: #8a6200;
+}
+
+.dark .madrid-match-started {
+  color: color-mix(in oklab, #febe10 75%, var(--foreground));
+}
+
+.madrid-match-closed {
+  color: var(--status-idle);
+}
+
+.madrid-stage {
+  background: linear-gradient(#febe10, #febe10) left bottom / 1.75rem 2px no-repeat;
+  box-shadow: inset 0 -1px 0 var(--border);
+}
+
+.madrid-stage-icon {
+  color: color-mix(in oklab, #febe10 80%, var(--foreground));
+}
+
+/* A task jumped to from a relation chip: one bright pulse. */
+.task-flash {
+  animation: task-flash 1.1s var(--ease-out, ease-out);
+}
+
+@keyframes task-flash {
+  0%, 35% { box-shadow: 0 0 0 3px var(--primary), 0 0 1.25rem color-mix(in oklab, var(--primary) 45%, transparent); }
+  100% { box-shadow: 0 0 0 0 transparent; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .task-flash { animation-duration: 0.01s; }
+}
+
+/* My tasks: an "In sessions" card in its task's workflow status colour `--tc` (TasksScreen useStatusTone): a 3px
+   rail down the left edge and a faint, even wash of it over the card. Drawn as background layers only, so the
+   border (madrid fixture edge) and the box-shadow (flash) stay theirs.
+   `--sc` is the drawn colour: the status colour, or a shade of it when another status shares that colour
+   (`data-status-variant`, lib/tasks.ts statusVariants), which also gives its rail a pattern of its own.
+   `:root` lifts it over `.dark .madrid-fixture`'s own background-image. */
+.task-status {
+  --sc: var(--tc);
+  --sc-rail: linear-gradient(var(--sc), var(--sc));
+  --sc-wash: 5%;
+}
+
+:root .task-status {
+  background-image:
+    var(--sc-rail),
+    linear-gradient(color-mix(in oklab, var(--tc) var(--sc-wash), transparent), color-mix(in oklab, var(--tc) var(--sc-wash), transparent));
+  background-size: 3px 100%, 100% 100%;
+  background-position: left top, left top;
+  background-repeat: no-repeat;
+}
+
+.dark .task-status {
+  --sc-wash: 7%;
+}
+
+.task-status[data-status-variant="1"] {
+  --sc: color-mix(in oklab, var(--tc) 65%, var(--foreground));
+  --sc-rail: repeating-linear-gradient(135deg, var(--sc) 0 3px, transparent 3px 6px);
+}
+
+.task-status[data-status-variant="2"] {
+  --sc: color-mix(in oklab, var(--tc) 60%, var(--background));
+  --sc-rail: repeating-linear-gradient(180deg, var(--sc) 0 6px, transparent 6px 9px);
+}
+
+.task-status[data-status-variant="3"] {
+  --sc: color-mix(in oklab, var(--tc) 75%, var(--foreground));
+  --sc-rail: repeating-linear-gradient(180deg, var(--sc) 0 2px, transparent 2px 5px);
+}
+
+/* Simeone crying over a lost session: rises from the bottom, the bubble's tail points left at him. */
+.madrid-simeone {
+  animation: madrid-mou-in 0.6s var(--ease-spring) backwards;
+}
+
+/* He leaves the pitch before he unmounts (EXIT_MS in SimeoneAlert.tsx, a beat longer so he is fully gone). */
+.madrid-simeone-leaving {
+  animation: madrid-simeone-out 0.35s ease-in forwards;
+}
+
+@keyframes madrid-simeone-out {
+  to {
+    opacity: 0;
+    transform: translateY(30%);
+  }
+}
+
+/* The photo sobs: a short shaky bob, tears streaming down the cheeks and a drop falling from each eye. */
+.madrid-simeone-sob {
+  transform-origin: 50% 100%;
+  animation: madrid-simeone-sob 0.5s ease-in-out 0.6s infinite alternate;
+}
+
+.madrid-simeone-stream {
+  opacity: 0.85;
+  animation: madrid-simeone-flow 0.5s linear infinite;
+}
+
+.madrid-simeone-drop {
+  transform-box: fill-box;
+  animation: madrid-simeone-fall 1.1s ease-in infinite;
+}
+
+@keyframes madrid-simeone-sob {
+  from {
+    transform: translateY(0) rotate(-1.5deg);
+  }
+  to {
+    transform: translateY(3px) rotate(1.5deg);
+  }
+}
+
+@keyframes madrid-simeone-flow {
+  to {
+    stroke-dashoffset: -22;
+  }
+}
+
+@keyframes madrid-simeone-fall {
+  0% {
+    transform: translateY(0);
+    opacity: 1;
+  }
+  100% {
+    transform: translateY(150px);
+    opacity: 0;
+  }
+}
+
+.madrid-bubble-tail-left::after {
+  content: "";
+  position: absolute;
+  left: -6px;
+  bottom: 18px;
+  width: 14px;
+  height: 14px;
+  background: var(--popover);
+  transform: rotate(45deg);
+  border-radius: 2px;
 }

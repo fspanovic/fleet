@@ -11,11 +11,9 @@ import { useNow } from '@/hooks/useNow'
 import { useSwipeBack } from '@/hooks/useSwipeBack'
 import { useUsage } from '@/hooks/useUsage'
 import { relTime } from '@/lib/format'
-import { CTX_FILL } from '@/lib/styles'
-import { money, resetsLabel, usageLevel, type AccountUsage } from '@/lib/usage'
+import { USAGE_FILL, USAGE_TEXT } from '@/lib/styles'
+import { extraUsageText, resetsLabel, usageLevel, type AccountUsage } from '@/lib/usage'
 import { cn } from '@/lib/utils'
-
-const LEVEL_TEXT = { low: 'text-foreground', warn: 'text-status-waiting', hot: 'text-status-error' } as const
 
 /**
  * `#/usage`: the Claude subscription limits (current session, weekly, per-model weekly,
@@ -43,16 +41,16 @@ export function UsageScreen({ layout = 'screen' }: { layout?: 'screen' | 'pane' 
       title="Refresh"
       onClick={() => void refresh()}
       disabled={refreshing}
-      className={cn('shrink-0', pane ? 'size-11 rounded-xl' : '-my-1.5 size-11 rounded-xl')}
+      className={cn('shrink-0', pane ? 'size-9 rounded-full text-muted-foreground' : '-my-1.5 size-11 rounded-full')}
     >
       <RefreshCwIcon className={cn('size-5', refreshing && 'animate-spin')} />
     </Button>
   )
 
   const content = (
-    <div className="mx-auto w-full max-w-lg space-y-4 px-4 pt-3 pb-[max(1.5rem,env(safe-area-inset-bottom))] md:max-w-2xl">
+    <div className="mx-auto w-full max-w-lg space-y-4 px-gutter pt-3 pb-[max(1.5rem,env(safe-area-inset-bottom))] md:max-w-2xl">
       {loading && !accounts.length ? (
-        <div className="space-y-3 rounded-xl border p-4">
+        <div className="space-y-3 rounded-[1.25rem] bg-fill-hover p-4">
           <Skeleton className="h-4 w-1/2" />
           <Skeleton className="h-2 w-full" />
           <Skeleton className="h-2 w-full" />
@@ -84,11 +82,11 @@ export function UsageScreen({ layout = 'screen' }: { layout?: 'screen' | 'pane' 
       <section aria-label="Usage" className="flex h-full min-w-0 flex-1 flex-col bg-background">
         <header
           data-tauri-drag-region="deep"
-          className="titlebar titlebar-lead flex shrink-0 items-center gap-1 border-b py-1.5 pr-2 pl-4 [--titlebar-pad:1rem]"
+          className="titlebar titlebar-lead flex shrink-0 items-center gap-1 py-2.5 pr-3 pl-6 [--titlebar-pad:1.5rem]"
         >
-          <h1 className="min-w-0 flex-1 text-[0.9375rem] leading-tight font-bold">Usage</h1>
+          <h1 className="min-w-0 flex-1 text-xl leading-tight font-bold tracking-(--tracking-display)">Usage</h1>
           {refreshButton}
-          <Button variant="ghost" size="icon" aria-label="Close usage" title="Close (Esc)" onClick={back} className="size-11 shrink-0 rounded-xl">
+          <Button variant="ghost" size="icon" aria-label="Close usage" title="Close (Esc)" onClick={back} className="size-11 shrink-0 rounded-full">
             <XIcon className="size-5" />
           </Button>
         </header>
@@ -101,10 +99,10 @@ export function UsageScreen({ layout = 'screen' }: { layout?: 'screen' | 'pane' 
     <div ref={screenRef} className="flex min-h-app flex-col bg-background">
       <ScreenHeader>
         <div className="-ml-2 flex min-h-8 items-center gap-1">
-          <Button variant="ghost" size="icon" aria-label="Back" onClick={back} className="-my-1.5 size-11 shrink-0 rounded-xl">
+          <Button variant="ghost" size="icon" aria-label="Back" onClick={back} className="-my-1.5 size-11 shrink-0 rounded-full">
             <ChevronLeftIcon className="size-6" />
           </Button>
-          <h1 className="flex-1 text-xl font-bold tracking-tight">Usage</h1>
+          <h1 className="flex-1 text-2xl font-bold tracking-(--tracking-display)">Usage</h1>
           {refreshButton}
         </div>
       </ScreenHeader>
@@ -119,7 +117,7 @@ function AccountCard({ account: a, now }: { account: AccountUsage; now: number }
   const x = u.extra_usage
   const fetched = Date.parse(u.fetched_at)
   return (
-    <section className="rounded-xl border bg-card p-4">
+    <section className="rounded-[1.25rem] bg-card shadow-float p-4">
       <header className="mb-3 flex flex-wrap items-baseline gap-x-2 gap-y-1">
         <h2 className="min-w-0 truncate font-semibold">{who}</h2>
         {a.account?.plan_label ? <span className="text-sm text-muted-foreground">{a.account.plan_label}</span> : null}
@@ -141,15 +139,7 @@ function AccountCard({ account: a, now }: { account: AccountUsage; now: number }
       {x ? (
         <div className="mt-3.5 flex items-baseline justify-between gap-2 border-t pt-3 text-sm">
           <span>Extra usage</span>
-          <span className="text-muted-foreground tabular-nums">
-            {!x.enabled
-              ? 'Off'
-              : x.limit != null
-                ? `${money(x.used ?? 0, x.currency)} / ${money(x.limit, x.currency)}`
-                : x.used != null
-                  ? `${money(x.used, x.currency)} spent`
-                  : 'On'}
-          </span>
+          <span className="text-muted-foreground tabular-nums">{extraUsageText(x)}</span>
         </div>
       ) : null}
       <footer className="mt-3 text-xs text-dimmer">
@@ -175,11 +165,11 @@ function LimitRow({ limit: l, now }: { limit: UsageLimit; now: number }) {
       <div className="mb-1.5 flex items-baseline gap-2 text-sm">
         <span className="min-w-0 truncate">{l.label}</span>
         {l.active ? (
-          <span className="rounded-full bg-muted px-1.5 py-px text-[0.6875rem] text-muted-foreground" title="The limit that stops you first">
+          <span className="rounded-full bg-muted px-1.5 py-px text-2xs text-muted-foreground" title="The limit that stops you first">
             binding
           </span>
         ) : null}
-        <span className={cn('ml-auto font-medium tabular-nums', LEVEL_TEXT[level])}>{pct}%</span>
+        <span className={cn('ml-auto font-medium tabular-nums', USAGE_TEXT[level])}>{pct}%</span>
       </div>
       <div
         className="relative h-2 overflow-hidden rounded-full bg-muted"
@@ -189,7 +179,7 @@ function LimitRow({ limit: l, now }: { limit: UsageLimit; now: number }) {
         aria-valuemax={100}
         aria-valuenow={pct}
       >
-        <span className={cn('absolute inset-y-0 left-0 rounded-full', level === 'low' ? 'bg-primary' : CTX_FILL[level])} style={{ width: `${Math.min(100, pct)}%` }} />
+        <span className={cn('absolute inset-y-0 left-0 rounded-full', USAGE_FILL[level])} style={{ width: `${Math.min(100, pct)}%` }} />
       </div>
       {resets ? <div className="mt-1 text-xs text-dimmer">Resets {resets}</div> : null}
     </div>

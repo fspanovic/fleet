@@ -21,11 +21,13 @@ A firstmate-style orchestrator for the many Claude Code sessions the user runs i
 | "that name is wrong / regenerate it" | `fleet name <target> --refresh` — ignores the cached name and replaces it |
 | "spawn / start a session to …" | `fleet spawn "<prompt>" --dir <path> [--harness claude\|codex\|pi] [--name <name>] [--model <id>] [--backend iterm\|tmux] [--window]` — `--harness` picks the coding agent (default Claude); `fleet harness list` shows what a host has and its models |
 | "what is X doing / where was X" (summary, PRs, files, todos) | `fleet brief <target>` (`--json` to parse) — the session's brief; see below |
+| "start a session in a new worktree / its own branch" | `fleet spawn "<prompt>" --dir <repo> --worktree [--handle <word>]` — a new git worktree `<workspaces.root>/<repo>/<handle>` on a new branch `<prefix>/<handle>` off the remote's default branch; once it has answered, the web server renames branch and title after the work (`fleet workspace name <target>` by hand) |
 | "continue X's work in a new session" | `fleet spawn --from <target> ["<extra instructions>"] [--name <name>]` — same host and cwd, seeded with X's brief |
 | "spawn a sibling / another session on this with shared context" | `fleet stack spawn <this session> "<prompt>" [--on <host>]` — see Session stacks below |
 | "what's in this stack / what are my siblings doing" | `fleet stack show <stack>` (`--json` to parse), `fleet stack list` |
 | "take this to another terminal" | `fleet handoff --file <brief.md> --dir <path> [--name <name>] [--tab] [--no-wait]` — see below |
 | "watch / notify me / anyone stuck" | `fleet watch [--interval 5] [--stuck 300] [--quiet] [--rows 1\|2\|auto] [--no-mouse]` |
+| "put this on my scratchpad / note this for me" | `fleet scratch add "<text>"` appends a paragraph to the user's scratchpad (the web UI's ⌘⇧S panel; it shows up there live); `fleet scratch` prints it. Needs the web server running |
 | "how much usage do I have left / my limits" | `fleet usage` (`--json` to parse) — session (5h), weekly, per-model weekly (e.g. Fable) and extra usage, with reset times |
 | "my PRs / what should I review / what's waiting on me" | `fleet prs` (`--json` to parse; `--column waiting-on-me` etc.; `--refresh` to fetch now) — see Pull requests below |
 | "check out PR X / work on PR X / review PR X in a session" | `fleet pr checkout <pr>` / `fleet pr spawn <pr> "<prompt>"` — see Pull requests below |
@@ -97,7 +99,7 @@ A firstmate-style orchestrator for the many Claude Code sessions the user runs i
 
 - **Targeting:** `-H <host>` (or `FLEET_HOST`) runs *any* command on that host: `fleet` re-invokes itself there over ssh (`fleet --local …`), so the remote needs `fleet` installed (`fleet install --host <host>`). `--local` forces this machine. Claude-session commands (`list`, `peek`, `send`, `spawn`, …) default to **this machine**; tmux-session and machine commands (`tmux …`, `enter`, `last`, `new`, `exec`, `ssh`) default to **`defaultHost`**.
 - **`--dir` for another host:** absolute or `~/…`. A path under this machine's home is rewritten to `~/…` so it lands under the remote's home; a relative path is refused.
-- `fleet -H <host> spawn …` on a headless host defaults to the tmux backend — each spawn/handoff gets **its own tmux session** (one session per job), named from `--name` or the dir's basename (a taken `--name` is an error; a taken basename becomes `app-2`, …). `--tmux-session <s>` opens a window in `s` instead.
+- `fleet -H <host> spawn …` on a headless host defaults to the tmux backend — each spawn/handoff gets **its own tmux session** (one session per job), named from `--name` or, without one, a random free word (`kelpie`) that is also the Claude session's name (a taken `--name` is an error). `--tmux-session <s>` opens a window in `s` instead.
 
 | Intent | Command |
 | --- | --- |
@@ -170,7 +172,7 @@ A **stack** is a set of sessions — on one host or across hosts — that share 
 `fleet prs` lists the open GitHub PRs that need the user, through `gh` (its login), in six columns: **unseenMentions** (someone @mentioned them and they haven't commented or reviewed since — `mention` has who, where and the line), **waitingOnMe** (review asked of them by name), **reviewMine** / **readyToMergeMine** (approved) / **draftMine**, and **waitingOnAuthor** (they reviewed, didn't approve). Each row has CI (`checks`), size, `rotting` (`fresh` → `critical`: how long it has waited, per column — "what's rotting" = `stale` and worse), `myReview` (`newCommits`: the head moved since their review) and `local.worktree` (where the branch is checked out on this host). Cached for `prs.refresh` (5m); `--cached` never fetches.
 
 - `<pr>` is `owner/repo#123`, `repo#123` (owner from the cache) or the PR's URL.
-- **`fleet pr checkout <pr>`** puts the PR in a worktree under `prs.worktrees` (`<repo>-<branch>`), or reports the one its branch is already in. It fetches, never resets or moves a branch; a fork's PR becomes branch `pr-<n>`. `--json` gives `path` and `contextLine`.
+- **`fleet pr checkout <pr>`** puts the PR in a worktree under `prs.worktrees` (`<repo>-<branch>`), or reports the one its branch is already in. It needs a clone under the `fleet repos` roots, named like the repo or with the PR's repo as `origin`. It fetches, never resets or moves a branch; a fork's PR becomes branch `pr-<n>`. `--json` gives `path` and `contextLine`.
 - **`fleet pr spawn <pr> "<prompt>"`** checks out, then starts a session in the worktree whose first prompt says which PR it is, its branches and the worktree path. It starts an agent: **confirm with the user like `spawn`**. `-n` shows what it would do and changes nothing.
 - **`fleet pr seen <pr>`** takes a PR out of unseenMentions (when the user says they've seen it).
 - **`fleet pr cleanup-worktrees`** lists the worktrees under `prs.worktrees` whose PR merged or closed and that are clean, pushed and unused (and why the rest stay); `--apply` removes them (and a merged PR's branch). It deletes: **show the list and confirm before `--apply`**.
@@ -256,7 +258,7 @@ In the shared config (`fleet config path`; `fleet config set naming.model sonnet
 
 ## Notes
 
-- Discovery is authoritative: Claude's own `~/.claude/sessions/<pid>.json` registry gives precise session↔status and real busy/idle.
+- Discovery is authoritative: Claude's own `~/.claude/sessions/<pid>.json` registry gives precise session↔status and real busy/idle. `shell` (`◎ idle · bg` in the table) is idle with a background task (a Monitor, a background Bash) still running: the turn is over and nothing is asked of the user — report it as idle.
 - `send` types text and submits it (Enter) into the target — treat it like speaking for the user into another agent; that's why it's confirm-first.
 - "stuck" = a session idle past `--stuck` seconds while blocked on a permission/confirmation prompt.
 - Bare `fleet` opens the dashboard on a terminal but falls back to a one-shot `list` when stdout is piped — so keep using `fleet list` explicitly when you parse the output; never call it bare expecting to read stdout.

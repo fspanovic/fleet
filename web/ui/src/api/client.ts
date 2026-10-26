@@ -18,8 +18,12 @@ import type {
   JobRunResponse,
   JobsResponse,
   Health,
+  DeleteResponse,
   KillResponse,
   MessagesResponse,
+  ModeSwitchResponse,
+  ModeTarget,
+  PastMessagesResponse,
   NoteFile,
   NotesSearch,
   NotesTree,
@@ -31,7 +35,10 @@ import type {
   ReposSettings,
   RepoSyncResult,
   RestoreResponse,
+  ScratchpadState,
+  SendNowResponse,
   SessionKey,
+  SessionTaskResponse,
   Settings,
   SpawnDirEntry,
   SpawnDirsResponse,
@@ -47,7 +54,11 @@ import type {
   PrSpawnResponse,
   PrWorktree,
   PrsResponse,
+  TasksResponse,
+  TaskStatusChangeResponse,
+  TaskStatusesResponse,
   UsageResponse,
+  WorktreeInspect,
 } from './types'
 import type { GroupEdit } from '@/lib/groups'
 
@@ -124,16 +135,39 @@ export const api = {
   messages: (host: string, id: string, limit = 60, o: Opts = {}) =>
     request<MessagesResponse>(`${sessionPath(host, id, 'messages')}?limit=${limit}`, o),
 
-  send: (host: string, id: string, text: string, o: Opts & { keepalive?: boolean } = {}) =>
-    request<OkResponse>(sessionPath(host, id, 'send'), { ...o, method: 'POST', body: { text } }),
+  /** `force`: send even while one of Claude's dialogs is open (else 409 `held: "dialog"`). */
+  send: (host: string, id: string, text: string, o: Opts & { keepalive?: boolean; force?: boolean } = {}) => {
+    const { force, ...rest } = o
+    return request<OkResponse>(sessionPath(host, id, 'send'), { ...rest, method: 'POST', body: force ? { text, force } : { text } })
+  },
   keys: (host: string, id: string, key: SessionKey, o: Opts = {}) =>
     request<OkResponse>(sessionPath(host, id, 'keys'), { ...o, method: 'POST', body: { key } }),
+  /** Claude's permission mode: Shift+Tab (`keys` with `until`) until the status line shows `target`, one cycle at most. */
+  switchMode: (host: string, id: string, target: ModeTarget, o: Opts = {}) =>
+    request<ModeSwitchResponse>(sessionPath(host, id, 'keys'), { ...o, method: 'POST', body: { key: 'BTab', until: target } }),
+  /**
+   * Hand Claude Code's queued prompts to Claude now (its Ctrl+X Ctrl+S). 409 when nothing is queued
+   * any more (`queued: 0`) or one of Claude's dialogs is open (`held: "dialog"`).
+   */
+  sendNow: (host: string, id: string, o: Opts = {}) =>
+    request<SendNowResponse>(sessionPath(host, id, 'send-now'), { ...o, method: 'POST', body: {} }),
+  /** Type `text` into the terminal without Enter (a dialog's filter, a menu letter). */
+  type: (host: string, id: string, text: string, o: Opts = {}) =>
+    request<OkResponse>(sessionPath(host, id, 'type'), { ...o, method: 'POST', body: { text } }),
   answer: (host: string, id: string, toolUseId: string, answers: QuestionAnswer[], o: Opts = {}) =>
     request<OkResponse>(sessionPath(host, id, 'answer'), { ...o, method: 'POST', body: { toolUseId, answers } }),
   rename: (host: string, id: string, title: string, o: Opts = {}) =>
     request<RenameResponse>(sessionPath(host, id, 'rename'), { ...o, method: 'POST', body: { title } }),
   kill: (host: string, id: string, o: Opts = {}) =>
     request<KillResponse>(sessionPath(host, id, 'kill'), { ...o, method: 'POST', body: {} }),
+  /** End the TUI and resume the same conversation in the same pane with --dangerously-skip-permissions (`kill` with `restart`). */
+  restartBypass: (host: string, id: string, o: Opts = {}) =>
+    request<KillResponse>(sessionPath(host, id, 'kill'), { ...o, method: 'POST', body: { restart: 'bypass' } }),
+  /** What Delete would do: the session's linked worktree, its changes, other sessions in it. */
+  worktree: (host: string, id: string, o: Opts = {}) => request<WorktreeInspect>(sessionPath(host, id, 'worktree'), o),
+  /** Close the session and remove its linked worktree (409: refused, nothing closed; `force` past changes). */
+  deleteSession: (host: string, id: string, force = false, o: Opts = {}) =>
+    request<DeleteResponse>(sessionPath(host, id, 'delete'), { ...o, method: 'POST', body: force ? { force: true } : {} }),
 
   spawn: (host: string, body: SpawnRequest, o: Opts = {}) =>
     request<SpawnResponse>(`${hostPath(host)}/spawn`, { ...o, method: 'POST', body }),
@@ -217,6 +251,12 @@ export const api = {
     return res.text()
   },
 
+  /** Link a session to one of your tasks by hand (`null` = to none); clearSessionTask = back to automatic links. */
+  setSessionTask: (host: string, id: string, taskId: string | null, o: Opts = {}) =>
+    request<SessionTaskResponse>(sessionPath(host, id, 'task'), { ...o, method: 'PUT', body: { taskId } }),
+  clearSessionTask: (host: string, id: string, o: Opts = {}) =>
+    request<SessionTaskResponse>(sessionPath(host, id, 'task'), { ...o, method: 'DELETE' }),
+
   /** The session's brief (never calls the model); `exists: false` = none yet. */
   brief: (host: string, id: string, o: Opts = {}) => request<Brief>(sessionPath(host, id, 'brief'), o),
   /** A human edit: the body markdown (the server keeps its frontmatter keys). */
@@ -269,9 +309,20 @@ export const api = {
   prSeen: (host: string, pr: string, o: Opts = {}) =>
     request<{ host: string; pr: string; seenAt: number | null }>(`${hostPath(host)}/prs/seen`, { ...o, method: 'POST', body: { pr } }),
   /** Check it out, then start a session in the worktree whose first prompt says what the PR is. */
-  prSpawn: (host: string, body: { pr: string; prompt?: string; name?: string; model?: string; harness?: string }, o: Opts = {}) =>
+  prSpawn: (host: string, body: { pr: string; prompt?: string; name?: string; model?: string; harness?: string; player?: string }, o: Opts = {}) =>
     request<PrSpawnResponse>(`${hostPath(host)}/prs/spawn`, { ...o, method: 'POST', body }),
 
+  /** Your open tasks (Productive), with this server's credentials (`refresh` skips its 60s cache). 501: not configured. */
+  tasks: ({ refresh = false, ...o }: Opts & { refresh?: boolean } = {}) => request<TasksResponse>(`/api/tasks${refresh ? '?refresh=1' : ''}`, o),
+  /** The workflow statuses one of your open tasks may move to, and its current one. */
+  taskStatuses: (id: string, o: Opts = {}) => request<TaskStatusesResponse>(`/api/tasks/${encodeURIComponent(id)}/statuses`, o),
+  /** Move one of your open tasks to a status of its workflow — writes to Productive. */
+  setTaskStatus: (id: string, statusId: string, o: Opts = {}) =>
+    request<TaskStatusChangeResponse>(`/api/tasks/${encodeURIComponent(id)}/status`, { ...o, method: 'POST', body: { statusId } }),
+
+  /** The read-only chat of a recently closed or dormant session (`id` from its entry's `sessions`). */
+  dormantMessages: (host: string, id: string, limit = 60, o: Opts = {}) =>
+    request<PastMessagesResponse>(`${hostPath(host)}/dormant/sessions/${enc(id)}/messages?limit=${limit}`, o),
   /** Sessions a reboot left dormant on `host` (404 / 501 on servers or CLIs that predate session recovery). */
   dormant: (host: string, o: Opts = {}) => request<DormantResponse>(`${hostPath(host)}/dormant`, o),
   /** Bring one back (`target`: tmux name or session id) or every one (`all`). Starts agents. */
@@ -280,6 +331,10 @@ export const api = {
     request<RestoreResponse>(`${hostPath(host)}/dormant/restore`, { ...o, method: 'POST', body }),
   forgetDormant: (host: string, body: { target: string; closed?: true } | { all: true; closed?: true }, o: Opts = {}) =>
     request<ForgetResponse>(`${hostPath(host)}/dormant/forget`, { ...o, method: 'POST', body }),
+
+  scratchpad: (o: Opts = {}) => request<ScratchpadState>('/api/scratchpad', o),
+  saveScratchpad: (text: string, baseUpdatedAt: number | null, o: Opts & { keepalive?: boolean } = {}) =>
+    request<ScratchpadState>('/api/scratchpad', { ...o, method: 'PUT', body: { text, baseUpdatedAt } }),
 
   groups: (o: Opts = {}) => request<GroupsResponse>('/api/groups', o),
   runGroups: (o: Opts = {}) => request<GroupsResponse>('/api/groups/run', { ...o, method: 'POST', body: {} }),

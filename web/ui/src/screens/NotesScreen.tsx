@@ -134,7 +134,7 @@ export function NotesScreen({ layout = 'screen', searchRef }: NotesScreenProps) 
             className={cn(
               'flex shrink-0 items-center gap-1.5 rounded-full border px-2.5 text-xs outline-none focus-visible:ring-2 focus-visible:ring-ring/50',
               pane ? 'h-7' : 'h-9',
-              h.name === host ? 'border-primary/40 bg-primary/10 text-foreground' : 'text-muted-foreground hover:bg-muted/60',
+              h.name === host ? 'border-transparent bg-primary/12 text-foreground ring-1 ring-primary/30 ring-inset' : 'border-transparent bg-fill text-muted-foreground hover:bg-fill-strong hover:text-foreground',
             )}
           >
             <HostDot host={h.name} />
@@ -199,7 +199,7 @@ export function NotesScreen({ layout = 'screen', searchRef }: NotesScreenProps) 
             pane ? undefined : (
               <ScreenHeader>
                 <div className="-ml-2 flex min-h-8 items-center gap-1">
-                  <Button variant="ghost" size="icon" aria-label="Back" onClick={back} className="-my-1.5 size-11 shrink-0 rounded-xl">
+                  <Button variant="ghost" size="icon" aria-label="Back" onClick={back} className="-my-1.5 size-11 shrink-0 rounded-full">
                     <ChevronLeftIcon className="size-6" />
                   </Button>
                   <span className="min-w-0 flex-1 truncate text-sm text-muted-foreground">{tree?.name ?? 'Notes'}</span>
@@ -220,19 +220,14 @@ export function NotesScreen({ layout = 'screen', searchRef }: NotesScreenProps) 
       <section aria-label="Notes" className="flex h-full min-w-0 flex-1 flex-col bg-background">
         <header
           data-tauri-drag-region="deep"
-          className="titlebar titlebar-lead flex shrink-0 items-center gap-2 border-b py-1.5 pr-2 pl-2 [--titlebar-pad:0.5rem]"
+          className="titlebar titlebar-lead flex shrink-0 items-center gap-2 py-2 pr-3 pl-5 [--titlebar-pad:1.25rem]"
         >
-          <Button asChild variant="ghost" size="sm" className="shrink-0 text-muted-foreground">
-            <a href="#/" title="Back to the sessions (Esc)">
-              <ChevronLeftIcon /> Sessions
-            </a>
-          </Button>
-          <h1 className="flex shrink-0 items-center gap-1.5 text-[0.9375rem] font-bold">
+          <h1 className="flex shrink-0 items-center gap-2 text-lg font-bold tracking-(--tracking-display)">
             <NotebookTextIcon className="size-4 text-muted-foreground" /> {tree?.name ?? 'Notes'}
           </h1>
           {hostPicker}
           <div className="mx-2 flex max-w-xl min-w-0 flex-1">{searchField}</div>
-          {tree ? <span className="hidden truncate font-mono text-[0.6875rem] text-dimmer xl:inline">{tree.root}</span> : null}
+          {tree ? <span className="hidden truncate font-mono text-2xs text-dimmer xl:inline">{tree.root}</span> : null}
           {tree?.editorUrl ? (
             <Button asChild variant="ghost" size="icon" className="shrink-0 text-muted-foreground">
               <a href={tree.editorUrl} aria-label="Open the notes folder in the editor" title={`Open ${tree.root} in ${/^cursor:/.test(tree.editorUrl) ? 'Cursor' : 'VS Code'}`}>
@@ -240,12 +235,15 @@ export function NotesScreen({ layout = 'screen', searchRef }: NotesScreenProps) 
               </a>
             </Button>
           ) : null}
+          <Button variant="ghost" size="icon" aria-label="Close" title="Close (Esc)" onClick={() => navigate('/')} className="ml-auto size-9 shrink-0 rounded-full text-muted-foreground">
+            <XIcon className="size-5" />
+          </Button>
         </header>
         {notice ?? (
           <div className="flex min-h-0 flex-1">
             <nav ref={treeRef} aria-label="Folders" className="w-64 shrink-0 overflow-y-auto border-r px-1.5 xl:w-72">
               {host && tree ? <NoteTree host={host} root={root} open={open} onToggle={toggle} selected={loc.path} compact /> : null}
-              {tree?.truncated ? <p className="px-2 py-2 text-[0.6875rem] text-dimmer">Only the first {tree.files.length} files are listed.</p> : null}
+              {tree?.truncated ? <p className="px-2 py-2 text-2xs text-dimmer">Only the first {tree.files.length} files are listed.</p> : null}
             </nav>
             <div className="w-80 shrink-0 overflow-y-auto border-r xl:w-96">{results ?? (host ? <RecentNotes host={host} notes={recent} selected={loc.path} compact /> : null)}</div>
             <main className="flex min-w-0 flex-1">
@@ -271,10 +269,10 @@ export function NotesScreen({ layout = 'screen', searchRef }: NotesScreenProps) 
     <div ref={screenRef} className="flex min-h-app flex-col bg-background">
       <ScreenHeader>
         <div className="-ml-2 flex min-h-8 items-center gap-1">
-          <Button variant="ghost" size="icon" aria-label="Back" onClick={() => navigate('/')} className="-my-1.5 size-11 shrink-0 rounded-xl">
+          <Button variant="ghost" size="icon" aria-label="Back" onClick={() => navigate('/')} className="-my-1.5 size-11 shrink-0 rounded-full">
             <ChevronLeftIcon className="size-6" />
           </Button>
-          <h1 className="min-w-0 flex-1 truncate text-xl font-bold tracking-tight">{tree?.name ?? 'Notes'}</h1>
+          <h1 className="min-w-0 flex-1 truncate text-2xl font-bold tracking-(--tracking-display)">{tree?.name ?? 'Notes'}</h1>
         </div>
         <div className="mt-2 flex flex-col gap-2">
           {searchField}
@@ -288,7 +286,7 @@ export function NotesScreen({ layout = 'screen', searchRef }: NotesScreenProps) 
               {host ? <RecentNotes host={host} notes={recent.slice(0, 5)} selected={null} /> : null}
               {host && tree ? (
                 <section aria-label="Folders" className="px-1.5">
-                  <h2 className="px-2.5 pt-3 pb-1 text-[0.6875rem] font-semibold tracking-wider text-dimmer uppercase">All notes</h2>
+                  <h2 className="px-2.5 pt-3 pb-1 text-2xs font-semibold tracking-wider text-dimmer uppercase">All notes</h2>
                   <NoteTree host={host} root={root} open={open} onToggle={toggle} selected={null} />
                 </section>
               ) : null}

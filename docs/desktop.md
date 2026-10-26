@@ -86,6 +86,9 @@ within 30 s — shows "Fleet server is not running" with the error, the log tail
 | ⌘W, close button | hide the window; the Dock icon brings it back; ⌘Q quits |
 | links | the server's own pages stay in the window; other http(s) pages and every `target="_blank"` link open in the default browser; `vscode://`, `vscode-insiders://`, `cursor://`, `mailto:` go to macOS (**Open in VS Code / Cursor** works); other schemes are dropped |
 | attach | `fleet://attach?host=<host>&session=<tmux session>` opens an iTerm tab (a window when none is open) running `fleet -H <host> enter -- <session>`, both words shell-quoted; any other `fleet://` link is dropped. The session details' **Attach** button and the palette's *Attach in iTerm* use it (shown only when the init script sets `data-attach="iterm"`, so an older app keeps just **Copy**). The first use asks for permission to control iTerm (Info.plist `NSAppleEventsUsageDescription`) |
+| notifications | `fleet://notify?title=<t>&body=<b>&path=/s/<host>/<id>` (the web UI sends one when a session starts waiting on you, unless Settings → Notifications is off; `data-notify="native"` tells it to) posts a Notification Center banner, also while Fleet is in front; a click shows the window on that session. The first one asks for notification permission. Outside a `.app` bundle (`cargo run`) it falls back to an osascript notification without click-through |
+| dock badge | the number of sessions waiting on you, read from the page title's `(2) ` prefix (`shell::badge_count`) |
+| hidden window | background throttling is off, so the page keeps polling (every 15 s while hidden) and notifies with the window hidden, minimized or covered |
 | downloads | the preview's Download saves to `~/Downloads` (no overwrite: `name (1).ext`) and reveals the file in Finder |
 | files | dropping files on a session / the New session form, pasting images and the paperclip picker work as in the browser (Tauri's own drop handler is off, so the page gets the drop) |
 | clipboard | Copy path and ⌘C/⌘V/⌘X/⌘A work (Edit menu); on a plain-http tailnet URL the UI uses its non-secure-context copy fallback |
@@ -96,8 +99,7 @@ within 30 s — shows "Fleet server is not running" with the error, the log tail
 
 The server's page gets no app commands: only the bundled start page may call the app's two
 commands (`connect`, `open_log`); the other way, a menu item only evaluates a fixed
-`window.dispatchEvent(new CustomEvent('fleet:command', …))` in the page (`shell::command`). The web app has no notifications today, so the app asks for no
-notification permission.
+`window.dispatchEvent(new CustomEvent('fleet:command', …))` in the page (`shell::command`).
 
 ### Window chrome and the one IPC grant
 

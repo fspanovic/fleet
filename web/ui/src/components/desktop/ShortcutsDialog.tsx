@@ -21,14 +21,14 @@ export function ShortcutsDialog({ open, onOpenChange }: { open: boolean; onOpenC
         <div className="grid gap-x-8 gap-y-4 sm:grid-cols-2">
           {SHORTCUT_HELP.map((section) => (
             <section key={section.title}>
-              <h3 className="pb-1.5 text-[0.6875rem] font-semibold tracking-wider text-dimmer uppercase">{section.title}</h3>
+              <h3 className="pb-1.5 text-2xs font-semibold tracking-wider text-dimmer uppercase">{section.title}</h3>
               <dl className="grid grid-cols-[auto_1fr] items-center gap-x-3 gap-y-1.5">
                 {section.items.map((item) => (
                   <Fragment key={item.label}>
                     <dt className="flex items-center gap-1 whitespace-nowrap">
                       {helpKeys(item, env).map((combo, i) => (
                         <Fragment key={i}>
-                          {i > 0 ? <span className="text-[0.6875rem] text-dimmer">or</span> : null}
+                          {i > 0 ? <span className="text-2xs text-dimmer">or</span> : null}
                           <KbdGroup aria-label={comboLabel(combo, env.mac)}>
                             {combo.map((k, j) => (
                               <Kbd key={j} className="border border-border">

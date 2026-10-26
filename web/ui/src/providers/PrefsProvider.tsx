@@ -13,12 +13,13 @@ import {
   parseTextSize,
   rootFontSize,
 } from '@/lib/prefs'
+import { NOTIFY_KEY } from '@/lib/notify'
 import { DEFAULT_SEND_DELAY, parseSendDelay } from '@/lib/outbox'
 
 const parseBool01 = (raw: string) => (raw === '1' || raw === '0' ? raw : undefined)
 
 /**
- * Text size, terminal text size, progress notes and the send delay for the whole app. The text size sets the
+ * Text size, terminal text size, progress notes, the send delay and needs-you notifications for the whole app. The text size sets the
  * root font-size on <html> (index.html applies the same rule before first paint), so every rem
  * scales with it.
  */
@@ -27,6 +28,7 @@ export function PrefsProvider({ children }: { children: ReactNode }) {
   const [termFont, setTermFont] = usePersistentState<number>(TERM_FONT_KEY, DEFAULT_TERM_FONT, parseTermFont)
   const [hideNotesRaw, setHideNotesRaw] = usePersistentState<string>(HIDE_NOTES_KEY, '0', parseBool01)
   const [sendDelay, setSendDelay] = usePersistentState<number>(SEND_DELAY_KEY, DEFAULT_SEND_DELAY, parseSendDelay)
+  const [notifyRaw, setNotifyRaw] = usePersistentState<string>(NOTIFY_KEY, '1', parseBool01)
 
   useEffect(() => {
     const root = document.documentElement
@@ -44,8 +46,10 @@ export function PrefsProvider({ children }: { children: ReactNode }) {
       setHideNotes: (v: boolean) => setHideNotesRaw(v ? '1' : '0'),
       sendDelay,
       setSendDelay,
+      notifyWaiting: notifyRaw === '1',
+      setNotifyWaiting: (v: boolean) => setNotifyRaw(v ? '1' : '0'),
     }),
-    [textSize, setTextSize, termFont, setTermFont, hideNotesRaw, setHideNotesRaw, sendDelay, setSendDelay],
+    [textSize, setTextSize, termFont, setTermFont, hideNotesRaw, setHideNotesRaw, sendDelay, setSendDelay, notifyRaw, setNotifyRaw],
   )
   return <PrefsContext.Provider value={value}>{children}</PrefsContext.Provider>
 }

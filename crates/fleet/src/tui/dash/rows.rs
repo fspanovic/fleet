@@ -115,7 +115,7 @@ fn term_style(label: &str) -> Style {
 fn status_style(status: &str) -> Style {
     match status {
         "busy" => Style::default().fg(Color::Green),
-        "idle" => Style::default().fg(Color::DarkGray),
+        "idle" | crate::core::discovery::SHELL => Style::default().fg(Color::DarkGray),
         "waiting" => Style::default()
             .fg(Color::Yellow)
             .add_modifier(Modifier::BOLD),
@@ -949,6 +949,20 @@ mod tests {
             assert!(out.contains("needs you"), "{w}x{h}: {out:?}");
             assert!(out.contains('⏸'), "{w}x{h}: {out:?}");
         }
+    }
+
+    // `shell`: idle at the prompt with a background task (a Monitor) running — the
+    // idle colour, a ringed dot and `idle · bg`, at every size that has a word.
+    #[test]
+    fn a_background_task_marks_an_idle_row() {
+        for (w, h) in [(170u16, 40u16), (60, 24), (44, 16), (32, 12)] {
+            let p = plan(w, h, 1, 22, None);
+            let out = drawn(&session("monitor-ci", "shell"), &p, 0, false).join("\n");
+            assert!(out.contains("idle · bg"), "{w}x{h}: {out:?}");
+            assert!(out.contains('◎'), "{w}x{h}: {out:?}");
+            assert!(!out.contains("shell"), "{w}x{h}: {out:?}");
+        }
+        assert_eq!(status_style("shell"), status_style("idle"));
     }
 
     #[test]

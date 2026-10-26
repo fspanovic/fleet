@@ -43,10 +43,10 @@ export function DormantProvider({ children }: { children: ReactNode }) {
   const refresh = usePoller(poll, DORMANT_POLL_MS, { enabled: !!hostsKey })
 
   const track = useCallback(
-    async (key: string, fn: () => Promise<void>) => {
+    async <T,>(key: string, fn: () => Promise<T>): Promise<T> => {
       setBusy((b) => new Set(b).add(key))
       try {
-        await fn()
+        return await fn()
       } finally {
         setBusy((b) => {
           const n = new Set(b)
@@ -64,11 +64,14 @@ export function DormantProvider({ children }: { children: ReactNode }) {
     (host: string, body: { target: string; closed?: true } | { all: true }) =>
       track(`${host}/${'all' in body ? '*' : `${body.closed ? 'closed/' : ''}${body.target}`}`, async () => {
         try {
-          const s = restoreSummary(await api.restoreDormant(host, body))
+          const r = await api.restoreDormant(host, body)
+          const s = restoreSummary(r)
           if (s.ok) toast.success(s.title, { description: s.description || undefined })
           else toast.error(s.title, { description: s.description || undefined })
+          return (r.restored ?? []).length > 0
         } catch (err) {
           toast.error('Resume failed', { description: dormantErrorMessage(err) })
+          return false
         }
       }),
     [track],

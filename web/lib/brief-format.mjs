@@ -352,6 +352,66 @@ export function addDismissed(dismissed = [], keys = []) {
   return out.slice(-MAX_DISMISSED);
 }
 
+// ------------------------------------------------------------------ summary line
+
+export const SUMMARY_LINE_MAX = 200;
+
+// Where-noise in a Summary sentence (the brief prompt asks for "what and where"; a row already shows
+// the host and directory): a home or machine path token (`~/…`, `/Users/…`, `/home/…`, … — not a URL path like
+// `/api/v2`; dots allowed inside, not a sentence's last one) and a branch name.
+const PATH_TOKEN = String.raw`(?:~|/(?:Users|home|root|private|tmp|var|opt|srv|mnt|Volumes|workspace)(?=/|\b))[^\s,;:()]*?(?=[\s,;:()]|[.!?](?:\s|$)|$)`;
+const NAME_TOKEN = String.raw`[^\s,;:()]+?(?=[\s,;:()]|[.!?](?:\s|$)|$)`;
+const PLACE_PAREN = /\b(?:branch|host|pid|workstation|ssh)\b|~\/|^\s*this mac\s*$/i;
+const PLACE_CLAUSES = [
+  new RegExp(String.raw`\s+(?:in|u|from|at)\s+${PATH_TOKEN}`, 'giu'), // " in ~/Code/project" (u: Croatian)
+  /\s+on host\s+[\w.-]+?(?=[\s,;:()]|[.!?](?:\s|$)|$)/giu, // " on host mac"
+  new RegExp(String.raw`(?:,\s*|\s+on\s+)branch\s+${NAME_TOKEN}`, 'giu'), // ", branch main" / " on branch main"
+];
+
+/**
+ * One Summary sentence without its location noise: parentheticals naming the branch / host / pid /
+ * workstation / ssh / a home path (or just one of `hosts`), and " in ~/path", " on host X", ", branch Y"
+ * clauses. A sentence that is nothing but location is kept as it was.
+ */
+function stripPlace(sentence, hosts) {
+  const names = new Set(hosts.filter(Boolean).map((h) => String(h).toLowerCase()));
+  let out = sentence.replace(/\s*\(([^()]*)\)/g, (m, inner) => (PLACE_PAREN.test(inner) || names.has(inner.trim().toLowerCase()) ? '' : m));
+  for (const re of PLACE_CLAUSES) out = out.replace(re, '');
+  out = out
+    .replace(/\s+([,;:.!?])/g, '$1')
+    .replace(/([,;:])(?:\s*[,;:])+/g, '$1')
+    .replace(/[,;:]+(?=[.!?]?$)/, '')
+    .replace(/^[\s,;:]+/, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+  return out.replace(/[.!?]$/, '').split(' ').length < 2 ? sentence : out;
+}
+
+/**
+ * A brief's Summary as one short line for session rows (`briefSummary` on `/api/fleet`) that says what
+ * the session does: markdown marks dropped (code ticks, bold, links → their text), whitespace folded,
+ * paths under `home` as `~/…`, location noise dropped per sentence (stripPlace; `hosts`: host names to
+ * drop as a bare parenthetical), then the first sentence (with the next one when the first is under
+ * 60 chars), cut at `max` on a word boundary + "…". '' = none.
+ */
+export function summaryLine(summary, { max = SUMMARY_LINE_MAX, home = null, hosts = [] } = {}) {
+  let text = String(summary ?? '');
+  if (home && home !== '/') text = text.split(`${home}/`).join('~/');
+  const flat = text
+    .replace(/\[([^\]]*)\]\([^)]*\)/g, '$1')
+    .replace(/\*\*|__|`/g, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+  if (!flat) return '';
+  const sentences = flat.split(/(?<=[.!?])\s+(?=[\p{Lu}\p{N}"'(])/u).map((x) => stripPlace(x, hosts));
+  let out = sentences[0];
+  if (out.length < 60 && sentences[1]) out = `${out} ${sentences[1]}`;
+  if (out.length <= max) return out;
+  const cut = out.slice(0, max);
+  const space = cut.lastIndexOf(' ');
+  return `${(space > max * 0.6 ? cut.slice(0, space) : cut).replace(/[\s,;:–—-]+$/u, '')}…`;
+}
+
 // ------------------------------------------------------------------ model output
 
 const MAX_SUMMARY_CHARS = 1200;

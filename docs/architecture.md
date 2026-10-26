@@ -49,6 +49,11 @@ Pure logic plus thin process wrappers; no printing. Everything a future front-en
   those checkouts and their worktrees).
 - **snapshot** — [session recovery](#session-recovery): records what runs, marks it dormant after
   a reboot, restores it.
+- **context** / **subagents** — per-session reads of the Claude transcript: [context
+  usage](#context-usage) and the [running subagents](#running-subagents).
+- **workspace** / **worktree** — [workspaces](#workspaces): a new git worktree per session, its
+  branch and title named after the work; `worktree` is the `git worktree add` plumbing it shares
+  with `fleet pr checkout`.
 
 ### CLI and TUI
 
@@ -137,7 +142,9 @@ server. Path: `$FLEET_CONFIG`, else `${XDG_CONFIG_HOME:-~/.config}/fleet/config.
 | `web.briefs` | `{ enabled, model, idleMs, minIntervalMs, maxDeltaChars, maxCallsPerHour, minNewTurns, minNewChars, maxBriefChars }` (default off, `haiku`, 60 s, 15 min, 12000, 12, 2, 2000, 3000): background generation of [session briefs](#session-briefs) on this host; reading and editing briefs (and a manual regenerate) work either way |
 | `web.stacks` | `{ syncMinutes }` (default 2): how often this host's web server runs `fleet stack sync` while any of its sessions is in a [stack](#session-stacks) |
 | `web.notes` | `{ root, name?, searchCmd?, exclude? }` (default off): the web UI's notes explorer (`#/notes`) over the markdown notes under `root` on this host — browse, full-text search (built in, or an external `searchCmd` such as `rg -n -i -F {query}`), preview with `[[wiki]]` / relative links between notes; hidden entries, `node_modules`, `.gitignore`d paths and age-encrypted blocks are never served (web/ARCHITECTURE.md → notes). Peers browse each other's notes through the usual proxy |
+| `web.tasks` | `{ productive: { keychain?: { service, account? }, organizationId?, personId?, orgSlug?, apiUrl?, appUrl? } }` (default off; on as well when `$PRODUCTIVE_AUTH_TOKEN` is set): the web UI's My tasks screen (`#/tasks`) — your open [Productive](https://productive.io) tasks, a click starts a session with the task's link and title as the first prompt. The token comes from `$PRODUCTIVE_AUTH_TOKEN`, else the macOS Keychain item `keychain` (a launchd service has no shell env); it is a bare personal access token (then `organizationId` + `personId` are required) or a base64 JSON envelope `{ organization_id, person_id, personal_access_token }` — only the token is ever sent. `orgSlug`: the `<slug>` in task links `<appUrl>/<org id>-<slug>/tasks/<id>` (default: from the organization's name, as the app builds it). `quickStart`: `{ label, prompt, dir, model?, worktree?, setStatus? }` or a list of them — a button on each task that starts a session at once (no form) on this server's host: `prompt` is a template (`{url}`, `{title}`, `{number}`, `{id}`), `dir` a `spawnDirs` label or an absolute / `~` path, `setStatus` a workflow status name (e.g. `"Working"`) the UI then offers to move the task to, resolved in the task's own workflow and asked first. Per server, not per host (web/ARCHITECTURE.md → tasks) |
 | `web.operator` | `{ hosts?, model?, voice?, clearIdleMinutes? }` (default `[self]`, Claude's default model, `alloy`, 60): the [voice operator](#voice-operator) — `hosts`: where it runs, the first that answers (set the same list on every machine so all talk to one operator); the model its Claude session runs; the OpenAI voice that reads its replies; `/clear` after that many idle minutes (0 = never) |
+| `web.sessionStyles` | `[{ label, match: { command?, promptIncludes? }, color }]` (default none, ≤ 20): a label chip and a tint in a palette colour (`azure`, `blue`, `burgundy`, `canary`, `celtic-blue`, `concrete`, `cyan`, `electric`, `fuchsia`, `green`, `lime-green`, `logan`, `orange`, `red`, `turquoise`, `yellow`) for the sessions a rule matches — e.g. long-lived watcher sessions started by one slash command. `command` is matched exactly against `first_command`, `promptIncludes` case-insensitively against the first prompt's first 300 characters; every key given must match, the first matching rule wins. The server building the view stamps `style` on every host's rows (web/ARCHITECTURE.md → Session styles). A bad shape is a config error |
 | `web.files.roots` | array of dirs (`~` expanded, default `[]`): extra roots a relative file path in chat may be under. A relative path missing under the session cwd first matches files the session touched (from its transcript), then ancestors of those, then these roots; the sandbox stays `$HOME` + cwd |
 | `desktop.url` | the server [Fleet.app](desktop.md) opens instead of `hosts.<self>.web`; unset → this machine's server |
 | `tmux` | tmux binary; `null` → `PATH`, then `/opt/homebrew/bin`, `/usr/local/bin` |
@@ -154,6 +161,7 @@ server. Path: `$FLEET_CONFIG`, else `${XDG_CONFIG_HOME:-~/.config}/fleet/config.
 | `repos` | [`fleet repos`](cli.md#repos), per machine: `roots` (default `["~/Code"]`; every directory directly under a root with a `.git` is a repo), `every` (default `"24h"`; `30m` / `12h` / `7d`), `overrides` (`{ "<dir name or ~/path>": "30m" }`), `exclude` (dir names or `~/` paths). Read leniently: a bad value is a warning and falls back to its default |
 | `prs` | [`fleet prs`](cli.md#pull-requests), per machine: `orgs` (search only these orgs), `repos` (`owner/name`s; with `orgs`, any of them), `refresh` (default `"5m"`, at least `1m`: how old the cache may get), `worktrees` (default `"~/Code/worktrees"`: where `fleet pr checkout` puts new worktrees). None of `orgs`/`repos` = all of GitHub. Read leniently |
 | `gh` | `gh` binary for `fleet prs`; `null` → `PATH`, then `/opt/homebrew/bin`, `/usr/local/bin` |
+| `workspaces` | [workspaces](#workspaces), per machine: `root` (default `"~/fleet/workspaces"`; env `FLEET_WORKSPACES_ROOT` overrides it) — new worktrees go to `<root>/<repo>/<handle>`; `branchPrefix` (default `null`: your GitHub login from `gh api user`, else a slug of `git config user.name`, else none; `""` = no prefix) — the new branch is `<branchPrefix>/<handle>`. Read leniently |
 | `grouping` | smart grouping: `enabled` (default `true` — `false` = repository fallback only), `model` (default `haiku`), `host` (the one host whose web server runs it; peers proxy `/api/groups` there), `consolidateMinutes` (default 60) |
 
 Rules: `~` is expanded at use time; unknown keys are preserved when the CLI rewrites the file
@@ -167,7 +175,13 @@ Env overrides for the web server: `FLEET_WEB_PORT` (or `PORT`), `FLEET_WEB_BIND`
 ## Session discovery
 
 Claude Code keeps a live registry: one `~/.claude/sessions/<pid>.json` per running interactive
-session with its session id, cwd, name, status (`busy` / `idle` / `waiting`) and what it waits for.
+session with its session id, cwd, name, status (`busy` / `idle` / `waiting` / `shell`) and what it waits for.
+`shell` is `idle` with a background task (a Monitor, a background Bash) still running: the turn is
+over and nothing is asked of the user. Fleet passes it through raw and treats it as `idle` for
+sorting, filters, counts and notifications — but automation that would kill, clear or type into a
+session (job auto-close, the operator's auto-`/clear`, workspace naming) waits for plain `idle`: the
+background task is live work. Views mark it `idle · background task` (`idle · bg`, a ringed dot,
+where space is tight).
 That is the source of truth; `fleet` enriches each entry:
 
 1. **pid → tty** via `ps`.
@@ -230,7 +244,15 @@ One title per session, one source of truth (`core::title`):
 - **Reverse edge**: `fleet tmux rename` of a single-Claude tmux session renames the Claude session
   (and so the title); raw `tmux rename-session` is not watched and is overwritten the next time the
   title changes. Auto-naming never clobbers a hand-picked tmux name: a derived-name session alone in
-  a non-generic tmux session (not `fw-hhmmss`, digits or `<cwd>-xx`) adopts that name as its title.
+  a non-generic tmux session (not the web's old `fw-hhmmss`, digits or `<cwd>-xx`) adopts that name
+  as its title.
+- **A spawn nobody named** (`fleet spawn` / `handoff` / `stack spawn` / `pr spawn` without
+  `--name`, the web's New session) gets one whimsical lowercase word (`core::words`,
+  `web/lib/names.mjs`: the same list) that no tmux session and no Claude session on the host is
+  called yet (`-2`, `-3`… once all are taken). It is the tmux session name and `claude -n <word>`,
+  and Claude records a `-n` name as chosen (`name_source: "user"`), so it is the title from the
+  start and auto-naming (`--all`, the dashboard, the web pass) never replaces it. Codex has no `-n`:
+  the word names only its tmux session.
 - **iTerm** tab titles are not touched: Claude already puts its session name in the terminal title,
   and a tab title set by hand is the user's.
 - **When `/rename` may be typed**: `/rename <title>` + Enter goes into the live Claude TUI. A
@@ -242,6 +264,54 @@ One title per session, one source of truth (`core::title`):
   Nothing is queued by fleet — a held rename is refused
   with a message and retried by the caller. Known gap: text half-typed into the session's prompt
   box would be prefixed to `/rename`.
+
+## Workspaces
+
+Orca's "New workspace": a session can start in a git worktree of its own (`core::workspace`).
+
+- **Making one** — `fleet spawn [prompt] --dir <repo> --worktree [--handle <h>]`, the web's New
+  session → **New worktree** (`POST …/spawn` with `worktree: true`, which runs
+  `fleet --local workspace new --json` and then the web spawner), or `fleet workspace new` alone.
+  `--dir` may be anywhere in the repo, a linked worktree included: the main checkout is used. The
+  handle is a whimsical word from `core::words` that no folder under `workspaces.root`, no local or
+  remote-tracking branch leaf and no tmux / Claude session is called yet (or `--handle`). The remote
+  is `origin` (else the only one); its default branch is `refs/remotes/<remote>/HEAD`, else what
+  `git ls-remote --symref <remote> HEAD` says (only when `HEAD` resolves there), else the first of
+  `main`, `master`, `develop` the remote has, else (offline) the first this clone has a
+  remote-tracking ref for. It is fetched (`+refs/heads/<b>:refs/remotes/<remote>/<b>`), then
+  `git worktree add --no-track -b <prefix>/<handle> <root>/<repo>/<handle> <remote>/<b>` — no
+  upstream, so nothing is pushed to the trunk by accident. The session starts there with the handle
+  as its name (`-n <handle>`, its tmux session too).
+- **The record** — `<repo>/.git/worktrees/<id>/fleet-workspace.json`: `{ version, handle, path, repo,
+  remote, base, prefix, createdBranch, branch, createdAt, slug, title, named }` (the `fleet workspace
+  new --json` shape). Git ignores the file there, and `git worktree remove` deletes it with the
+  worktree. `fleet list` finds it from a session's cwd (the nearest `.git` file → its `gitdir:`;
+  files only) and stamps `workspace: { handle, branch, path, repo, base, named }` on the row.
+- **Naming it after the work** — `fleet workspace name <target> [--json]`. It needs the session's
+  first prompt (`title`); the slug comes from the naming model as for `fleet name` (`naming.model`,
+  the same cache; with `naming.enabled = false` or no model, the heuristic slug of the prompt), with
+  the cwd left out of the context — folder and branch both still say the handle. Then:
+  1. **branch** `<prefix>/<handle>` → `<prefix>/<slug>` (`git branch -m`), only when the worktree is
+     still on the branch fleet created (`createdBranch`), it has no upstream and no remote-tracking
+     ref (never pushed), and `<prefix>/<slug>` is a valid name that exists neither locally nor as a
+     remote-tracking ref. Otherwise the branch is left alone and the report says why;
+  2. **title** `Upload retry limit` (the slug as words) through `core::title::apply_rename` — the
+     path `fleet rename` and the web rename route use (tmux follows) — unless the session already
+     carries a name other than the handle (someone named it: `result: "kept"`).
+  A session waiting on a prompt is held (exit 3, `result: "held"`; the slug is kept in the record,
+  so a retry makes no model call). `named: true` once done; `--force` runs it again.
+  `--json`: `{ ok, result: named|kept|held|no-prompt|already-named, session_id, pid, host, handle,
+  slug, title, source: llm|cached|heuristic|record, branch: { from, to, renamed, note }, message }`.
+- **Who runs it** — every web server, for its own host (`web/lib/workspaces.mjs`): every ~10 s it
+  looks at its `fleet list` rows and runs `fleet --local workspace name <id> --json` for each row
+  with `workspace.named: false`, a first prompt and `status: "idle"` (its first answer is in), one
+  at a time, at most 8 tries per session. CLI-spawned workspaces are covered too; without a web
+  server, run `fleet workspace name` by hand. The handle stays the folder name and is shown as a
+  label on rows and cards.
+- **Deleting** — the web's Delete removes the worktree as for any linked worktree and, for a
+  workspace whose worktree is still on the branch fleet left it on, deletes that branch too when it
+  has no commits on no remote (re-checked after the worktree is gone). Sessions not started with a
+  worktree keep today's naming (the word stays their title until renamed).
 
 ## JSON contracts
 
@@ -260,7 +330,7 @@ by — with no config, `local`):
 | `name` | string \| null | Claude session name |
 | `name_source` | string \| null | `"derived"` = Claude's cwd+hash fallback |
 | `cwd` | string \| null | working directory |
-| `status` | string | `busy` \| `idle` \| `waiting` \| `unknown` |
+| `status` | string | `busy` \| `idle` \| `waiting` \| `shell` \| `unknown` — `shell`: idle with a background task running, treated as `idle` |
 | `waiting_for` | string \| null | what a `waiting` session is blocked on |
 | `updated_at` | number \| null | last status change, ms since epoch |
 | `tty` | string \| null | |
@@ -269,6 +339,7 @@ by — with no config, `local`):
 | `tab` | string \| null | tmux window name / iTerm tab title |
 | `tmux_session` | string \| null | tmux session the pane lives in |
 | `title` | string \| null | first prompt (can be long) |
+| `first_command` | string \| null | the slash command (`/name`, arguments left out) whose expansion is the first prompt — Claude Code logs `<command-name>/name</command-name>` as its own user message right before the expansion, which `title` skips; `null` when the first prompt was typed, and always for Codex / pi |
 | `gen_title` | string \| null | generated title, if cached |
 | `display_title` | string | **the** title every view draws — see [Session titles](#session-titles) |
 | `context` | object \| null | context-window usage (below); `null` when no transcript usage is found |
@@ -277,6 +348,8 @@ by — with no config, `local`):
 | `model` | string \| null | the model it runs, when known (Claude: the context entry's) |
 | `transcript` | string \| null | absolute transcript path (Codex / pi only) |
 | `origin` | object \| null | `{ job, run }` of the [job](cli.md#jobs) run that started the session (its tmux pane option `@fleet_job_run`); `null` when none |
+| `subagents` | array | the subagents (Agent / Task tool) the session is running right now, oldest first — see [Running subagents](#running-subagents); `[]` when none, always `[]` for Codex / pi |
+| `workspace` | object \| null | `{ handle, branch, path, repo, base, named }` when the session runs in a [workspace](#workspaces) — a worktree fleet made for it (read-only stamp from its record, no git call); `null` otherwise |
 | `host` | string | which machine the row came from |
 
 `list --all-hosts --json` is the same array across every configured host.
@@ -301,6 +374,49 @@ back to a scan of the project dirs when the session's cwd changed):
   signals over-reports its percentage.
 - **`pct`** (number): `round(used / window * 100)`; can exceed 100.
 - **`model`** (string \| null): `message.model` of that entry.
+
+#### Running subagents
+
+`subagents` is computed in `core::subagents` from the files Claude Code keeps next to the
+transcript: `<session id>/subagents/agent-<id>.jsonl` (the subagent's own transcript) and
+`agent-<id>.meta.json` (`agentType`, `description`, `toolUseId`, `spawnDepth`, `requestShape`,
+`model`, optional `parentAgentId`, `finished`, `stoppedByUser`). Each element:
+
+| field | type | notes |
+| --- | --- | --- |
+| `id` | string | Claude Code's agent id |
+| `description` | string | its job: the Agent tool call's `description` |
+| `agent_type` | string \| null | `general-purpose`, `Explore`, a custom agent… |
+| `model` | string \| null | the model it was asked to run (`opus`, a full id…), when given |
+| `background` | boolean | `requestShape: "background"`; `false` = the session waits on it |
+| `started_at` | number \| null | ms since epoch: its transcript's creation time (not its first entry: a fork's transcript opens with a copy of its parent's history) |
+| `last_active_at` | number \| null | ms since epoch: its transcript's last write |
+| `depth` | number | `spawnDepth`: 1 = started by the session, 2 = by one of its subagents |
+| `parent_agent_id` | string \| null | the subagent that started it (`depth` ≥ 2) |
+
+A subagent counts as **running** when all of these hold:
+
+1. its meta has neither `finished: true` nor `stoppedByUser: true` (only newer Claude Codes
+   write them, so their absence proves nothing);
+2. its transcript was written after the session's process started (the registry's
+   `startedAt`) — a resumed session does not get the old process's subagents back;
+3. its transcript was written in the last hour (`STALE_AFTER_MS`) — the fallback for a subagent
+   that died without a completion (a crash, a lost notification, an unreadable parent);
+4. the **newest** event about it in its parent's transcript (the session's; the parent
+   subagent's for a nested one) is not a completion. Completions: the `tool_result` of its
+   `toolUseId` (foreground), a `<task-notification>` with its id as `<task-id>` (background, any
+   status), a `[Subagent hand-back]` `<agent-message from="<id>">`. Its launch (the `tool_use`,
+   the "Async agent launched" result) and a later `SendMessage` to it (which resumes a finished
+   agent) mean running. Only structured `user` / `assistant` / `queue-operation` entries count —
+   text that merely quotes an id, and `api-request*` mirror entries, do not. No event found =
+   running.
+
+Cost: one `read_dir` per session (nothing more without a `subagents/` dir), each meta read and
+each subagent transcript stat'ed. Only when a candidate passes 1–3 is the parent transcript read,
+backwards from its end in 256 KiB chunks, until every candidate is decided or the scan passes the
+oldest candidate's start (at most 16 MiB). Verdicts are cached per `(path, size, mtime)` in
+long-running processes (the TUI, MCP). On a 4-session machine with three running subagents the
+whole pass takes ~4 ms.
 
 ### Subscription usage
 
@@ -357,7 +473,9 @@ dormant ones are in `fleet restore --json`.
 ### `fleet prs --json`
 
 See [cli.md](cli.md#pull-requests) for the shape. Column ids and `Pr` fields follow the add-only
-rule; `local` and `rotting` are worked out on every call and never cached, and so is the **unseenMentions** column:
+rule (`links` was added: the description's URLs, cached with the PR — cache version 2, so an older cache is
+fetched again; cache version 3 held a `merged` list from a fifth search, since dropped — version 4 is
+without it, so a cache holding it is fetched again); `local` and `rotting` are worked out on every call and never cached, and so is the **unseenMentions** column:
 the cache keeps each PR's own column and its `mention`, and every read moves the PRs whose mention
 is neither answered nor marked seen (`prs-seen.json`) there.
 
@@ -374,15 +492,17 @@ JSON over HTTP, errors as `{ "error": "..." }`. At a high level:
 | method | path | purpose |
 | --- | --- | --- |
 | GET | `/api/health` | name, version, apiVersion, self, uptime, autoName (`lastRun`) |
-| GET | `/api/settings` | apiVersion, self, host names, quick replies, `transcribe: { enabled }` (this server has a transcription key), `speak: { enabled, voice }` (it can read replies aloud), `operator: { enabled, hosts }` (the [voice operator](#voice-operator) and where it runs) |
-| GET | `/api/fleet[?local=1]` | `{ self, hosts: [{ name, ok, error?, sessions, spawnDirs, notes?, stacks? }], snapshotAt }` — `stacks`: that host's [session stacks](#session-stacks), compact (`{ id, label, host, members: [{ session, host, live }] }`), from which the merged view stamps `stack: { id, label, host }` on the rows of members running on *other* hosts; sessions are `list --json` objects + `host` (a Codex session with no transcript yet gets `session_id: "pid-<pid>"` until it has one) (`title` capped at 300 chars) + `editorUrl` (the "Open in editor" link for its cwd, built by the server that answered — see [Session briefs](#session-briefs)); the merged view is a warm background-refreshed snapshot |
-| GET | `/api/hosts/:host/sessions/:id/peek?lines=N` | plain-text screen |
+| GET | `/api/settings` | apiVersion, self, host names, quick replies, `tasks: { enabled, quickStart? }` (`web.tasks` is configured here; its quick starts with `dir` resolved), `transcribe: { enabled }` (this server has a transcription key), `speak: { enabled, voice }` (it can read replies aloud), `operator: { enabled, hosts }` (the [voice operator](#voice-operator) and where it runs) |
+| GET | `/api/fleet[?local=1]` | `{ self, hosts: [{ name, ok, error?, sessions, spawnDirs, notes?, stacks? }], snapshotAt }` — `stacks`: that host's [session stacks](#session-stacks), compact (`{ id, label, host, members: [{ session, host, live }] }`), from which the merged view stamps `stack: { id, label, host }` on the rows of members running on *other* hosts; sessions are `list --json` objects + `host` (a Codex session with no transcript yet gets `session_id: "pid-<pid>"` until it has one) (`title` capped at 300 chars) + `editorUrl` (the "Open in editor" link for its cwd, built by the server that answered — see [Session briefs](#session-briefs)) + `taskMentions` (`[{ url, count }]`, most first, ≤ 10: the task URLs — `…/tasks/<id>`, any host — its whole transcript mentions, counted in the background by the session's own host; absent when none; see web/ARCHITECTURE.md → Task mentions); + `manualTask` (`{ id }` / `{ id: null }`: the session's manual task link, set with `PUT`/`DELETE /api/hosts/:host/sessions/:id/task` and kept by its own host; absent when none; see web/ARCHITECTURE.md → Manual task links) + `briefSummary` (string: the session's [brief](#session-briefs) Summary as one short line — what it does, not where: markdown and location noise (branch / host / pid / home-path parentheticals and clauses) dropped, first sentence, ≤ 200 chars — read by its own host from the brief file, never generated for it; absent when there is none); the merged view is a warm background-refreshed snapshot |
+| GET | `/api/hosts/:host/sessions/:id/peek?lines=N` | plain-text screen; + `mode` (`{ id, label }` \| null): Claude's permission mode from its status line (`bypass`, `auto`, `manual`, `acceptEdits`, `plan`…; null for another harness or none on screen) |
 | GET | `/api/hosts/:host/sessions/:id/messages?limit=N` | conversation (no tool calls) from the transcript; an AskUserQuestion call is a message of `kind: "question"` with `id` (the tool use id), `questions` (`[{ question, header, multiSelect, options: [{ label, description }] }]`), `text` (a markdown rendering) and, once it has a result, `answers` (per question, the answer string) or `declined: true`; a prompt typed while Claude works and still in its queue is a `kind: "user"` message with `queued: true`, always last (prompts it took mid-turn show where it took them) |
-| POST | `/api/hosts/:host/sessions/:id/send` | `{ text }` → typed + Enter |
-| POST | `/api/hosts/:host/sessions/:id/keys` | `{ key }` (Enter, Escape, …) |
+| POST | `/api/hosts/:host/sessions/:id/send` | `{ text, force? }` → typed + Enter; **409** `{ error, held: "dialog" }` (nothing typed) while the session waits on one of Claude Code's own dialogs (registry `waiting_for: "dialog open"`: `/mcp`, `/model`, `/config`…) unless `force: true` |
+| POST | `/api/hosts/:host/sessions/:id/keys` | `{ key }`: Enter, Escape, Up, Down, Left, Right, Tab, BTab (Shift+Tab), Space, BSpace, Home, End, PageUp, PageDown (never Ctrl combinations). `{ key: "BTab", until: "bypass" \| "auto" }` switches a Claude session's permission mode: Shift+Tab, the pane re-read after every press, until the status line shows `until`, at most one full cycle → `{ ok, mode, from, presses, cycle, already }` (already there: nothing pressed). **409** (nothing pressed) `held: "waiting"` while it waits on a prompt or question, `candidates` for an ambiguous id prefix, a non-Claude harness or no mode line on screen; **409** `{ unavailable, restart, cycle }` when the target is not in its cycle (a session started without `--dangerously-skip-permissions` / `--allow-dangerously-skip-permissions` has no bypass; it is left in the mode it started in); 502 when a press changed nothing. See [web/ARCHITECTURE.md](../web/ARCHITECTURE.md) → permission mode |
+| POST | `/api/hosts/:host/sessions/:id/send-now` | `{}`: Claude Code's send-now (Ctrl+X Ctrl+S) for the prompts queued in it, only while the transcript has one (409 otherwise, or while a dialog is open) |
+| POST | `/api/hosts/:host/sessions/:id/type` | `{ text }` (≤ 200 chars, no control characters) → typed without Enter (a dialog's filter, a menu letter) |
 | POST | `/api/hosts/:host/sessions/:id/answer` | `{ toolUseId, answers: [{ options: [index…], text? }] }` (one per question) → types the arrows/Enter/text a human would into the pending AskUserQuestion prompt. 400 bad answer (single-select: one option or text; multi-select: at least one), 404 unknown question, **409** (nothing typed) when it is already answered, the session isn't waiting, or the terminal isn't showing that prompt untouched (first question, cursor on option 1) |
 | POST | `/api/hosts/:host/sessions/:id/rename` | `{ title }` (1–64 chars, one line) → `fleet rename <session_id> <title> --json`; 200 with the report, **409** when held (waiting on a prompt, or a busy Codex / pi session; nothing typed), 400 bad title, 502 CLI failure |
-| POST | `/api/hosts/:host/spawn` | `{ name?, dir?, prompt?, model?, harness? }` → new tmux session running that [harness](#other-harnesses) (`claude` default, `codex`, `pi`; its launcher is config `claude` / `harnesses.<id>.command`; `-n <name>` for Claude and pi only); `dir` must resolve inside one of the host's `spawnDirs` (else 400); a prompt too long to type (the launch line over ~900 bytes) is written to `~/.claude/fleet-prompts/` and passed as `"$(cat <file>)"`; a first-run trust prompt is accepted (Claude: Down + Enter; Codex: Enter on "Trust and continue"); when the agent never starts (the pane is still just a shell after ~10s) the tmux session is killed and the answer is 502 with the pane's last lines |
+| POST | `/api/hosts/:host/spawn` | `{ name?, dir?, prompt?, model?, harness?, worktree? }` → new tmux session running that [harness](#other-harnesses) (`claude` default, `codex`, `pi`; its launcher is config `claude` / `harnesses.<id>.command`; `-n <name>` for Claude and pi only); `dir` must resolve inside one of the host's `spawnDirs` (else 400); a prompt too long to type (the launch line over ~900 bytes) is written to `~/.claude/fleet-prompts/` and passed as `"$(cat <file>)"`; a first-run trust prompt is accepted (Claude: Down + Enter; Codex: Enter on "Trust and continue"); when the agent never starts (the pane is still just a shell after ~10s) the tmux session is killed and the answer is 502 with the pane's last lines. `worktree: true` (boolean, else 400): first `fleet --local workspace new --dir <dir> [--handle <name>] --json` makes a [workspace](#workspaces) of `dir`'s repo (a typed `name` is the handle; 400 with the CLI's reason — not a git repo, handle taken — and nothing started; 501 when the CLI predates it), then the session starts in it named after the handle; the answer adds `workspace` (the record). Proxy timeout 5 min (it fetches) |
 | GET | `/api/hosts/:host/harnesses[?refresh=1]` | `{ host, harnesses: [{ id, label, command, installed, models }] }` — `fleet --local harness list --json`, cached 10 min; Claude's `models` are `web.models`. An older CLI answers Claude alone |
 | GET | `/api/hosts/:host/usage[?refresh=1]` | that host's Claude subscription limits: `fleet usage --json` + `host` (see [Subscription usage](#subscription-usage)); 502 with the CLI's reason (no login, endpoint down with nothing cached) |
 | POST | `/api/hosts/:host/prs/checkout` | `{ pr: "owner/repo#123" }` → `{ host, worktree }`: `fleet pr checkout --json` on that host |
@@ -397,10 +517,12 @@ JSON over HTTP, errors as `{ "error": "..." }`. At a high level:
 | POST | `/api/hosts/:host/jobs/:name/run` | `{ force? }` → `{ host, name, output }`: `fleet --local jobs run [--force] <name>`. Starts an agent (spawn's trust level); 409 `{ error, busy: true }` while a session of the job is working, unless `force` |
 | POST | `/api/hosts/:host/jobs/:name/enabled` | `{ enabled: boolean }` → `{ host, name, enabled, output, job }`: `fleet --local jobs enable\|disable <name>`, then the job as `show` reports it |
 | POST | `/api/hosts/:host/repos/sync` · `/repos/service` | `{ names? }` → `fleet --local repos sync --json` (409 while one runs); `{ install }` → `fleet --local repos install-service [--uninstall]` |
-| POST | `/api/hosts/:host/sessions/:id/kill` | `{}` → SIGTERM (then SIGKILL) Claude, then kill its tmux session (or just its window when the session has others) / close its iTerm tab |
-| GET | `/api/groups` | the Board view's groups: `{ enabled, host, intervalMinutes, running, updatedAt, lastRun, groups: [{ id, label, description, source, members: [{ host, id, dormant? }] }] }` (`dormant: true` only on a member that is dormant on its host; never set from stored groups, so the UI also cross-references `GET …/dormant`); served by the grouping host, proxied by every other server (`enabled: false` when nobody runs it) |
+| POST | `/api/hosts/:host/sessions/:id/kill` | `{}` → SIGTERM (then SIGKILL) Claude, then kill its tmux session (or just its window when the session has others) / close its iTerm tab. `{ restart: "bypass" }` instead keeps the tmux pane and resumes the same conversation in it: `cd <cwd> && <claude launcher> [kept flags] --resume <id> --dangerously-skip-permissions [-n <name>]` → `{ ok, process, terminal: "left", pane, mode, already, restarted: { command } }` (already in bypass: nothing ended, `restarted: null`). It kills a live turn: **409** while the session is busy, waiting or running a background task (`held`), for Claude as the pane's own process (no shell to resume in), an iTerm or non-Claude session, or an ambiguous id (`candidates`). Proxy timeout 60 s |
+| GET | `/api/hosts/:host/sessions/:id/worktree` | what Delete would do: the session's linked git worktree (path, branch, main checkout, locked), its uncommitted changes and commits on no remote, other live sessions inside it; `workspace: { handle, branch, deleteBranch }` when it is a [workspace](#workspaces) fleet made for the session (`null` otherwise); `action: "close-only"` with a `reason` for a main checkout / outside git; `servers` (dev servers started in the worktree that are stopped first, and processes inside it left alone) and `leftovers` (fe-live-env state, puma-dev host files, watchman roots cleaned after) |
+| POST | `/api/hosts/:host/sessions/:id/delete` | `{ force? }` → the kill above, then `git worktree remove [--force] <worktree>` (branch kept — except a [workspace](#workspaces)'s: when `workspace.deleteBranch`, it is re-checked for commits on no remote and `git branch -D`'d, reported as `worktree.branchDeleted` / `branchNote`; `prune` only if it stays registered with its dir gone). Before the remove it stops the dev servers started in the worktree, after the branch it cleans their leftovers — reported as `servers` / `leftovers`. **409** (nothing closed) when another live session is inside it, it is locked, or it has changes / unpushed commits without `force`. Close-only outside a linked worktree — see [web/ARCHITECTURE.md](../web/ARCHITECTURE.md) → delete |
+| GET | `/api/groups` | the Board view's groups: `{ enabled, host, intervalMinutes, running, updatedAt, lastRun, groups: [{ id, label, description, source, members: [{ host, id, dormant? }] }], defaultGroup }` (`defaultGroup`: the default group's id, `null` when none) (`dormant: true` only on a member that is dormant on its host; never set from stored groups, so the UI also cross-references `GET …/dormant`); served by the grouping host, proxied by every other server (`enabled: false` when nobody runs it) |
 | POST | `/api/groups/run` | `{}` → run the grouping pass now (on the grouping host) → the same shape; 501 when grouping is off |
-| POST | `/api/groups/edit` | `{ op: "rename", id, label }` or `{ op: "move", host, session, to }` / `{ op: "move", host, session, label }` (a new group) / `{ op: "create", label }` / `{ op: "delete", id }` (empty groups) → `fleet group --rename/--move/--create/--delete` on the grouping host (proxied there) → the same shape; 400 bad body, 409 refused (unknown id, taken label), 501 when grouping is off |
+| POST | `/api/groups/edit` | `{ op: "rename", id, label }` or `{ op: "move", host, session, to }` / `{ op: "move", host, session, label }` (a new group) / `{ op: "create", label }` / `{ op: "delete", id }` (empty groups) / `{ op: "default", id }` (`id: null` unsets it) → `fleet group --rename/--move/--create/--delete/--set-default/--clear-default` on the grouping host (proxied there) → the same shape; 400 bad body, 409 refused (unknown id, taken label), 501 when grouping is off |
 | POST | `/api/hosts/:host/uploads?name=<file>` | raw file body → stored under that host's `web.uploads.dir` → `{ host, path, name, size }` (absolute `path`; 413 over `web.uploads.maxMB`); streamed through to a peer |
 | POST | `/api/transcribe?hint=<words>` | raw audio body (webm / ogg / mp4 / mp3 / wav, ≤ 25 MB) → `{ text, model }` via OpenAI `gpt-4o-transcribe`; always this server, never proxied. `hint` (≤ 400 chars: session name, repo) steers spelling. Key: `$OPENAI_SPEECH_TO_TEXT_API_KEY`, else the macOS Keychain item of that name (never the config file). 501 without a key, 415 non-audio, 413 too large, 502 upstream errors (including a bad key), 429 rate limit |
 | POST | `/api/speak` | `{ text }` (markdown is fine: code, tables, URLs and ids are dropped, at most ~4000 chars) → `audio/mpeg` via OpenAI `gpt-4o-mini-tts`; always this server. Key: `$OPENAI_TEXT_TO_SPEECH_API_KEY` (env, else Keychain), else the transcription key (which needs the audio scope). 400 nothing to say, 501 without a key, 502 upstream errors, 429 rate limit |
@@ -411,6 +533,9 @@ JSON over HTTP, errors as `{ "error": "..." }`. At a high level:
 | GET | `/api/hosts/:host/sessions/:id/complete?kind=skills\|files\|brain` | composer autocomplete, listed on the session's host (cached ~10 s): `skills` → `{ skills: [{ name, description, source: builtin\|user\|project\|plugin, argumentHint? }] }` (Claude Code's built-in commands, `~/.claude/skills` + `commands`, the cwd's and its ancestors' `.claude/skills` + `commands`, enabled plugins as `plugin:name`); `files` → `{ files, truncated }` (the `.md` / `.plain` files under the cwd: `git ls-files`, else a walk); `brain` → `{ available, notes: [{ ref, path, title? }] }` (the markdown under `brain_root:` in `~/.brainrc`; `ref` = file name, or path when two share it). 400 bad kind |
 | POST | `/api/hosts/:host/sessions/:id/files/open` | `{ path }` → opens it with its default app **on that host** (`open` / `xdg-open`; runnable files are revealed in their folder instead) |
 | GET | `/api/hosts/:host/sessions/:id/brief` | the session's [brief](#session-briefs): `{ host, id, exists, markdown, parsed: { summary, resources, todos, plan }, updated, editedAt, generatedAt, generatedThrough, generating, enabled, continuePrompt, absCwd, gitRoot, worktrees, editor, editorUrl }` — an empty skeleton (`exists: false`) before there is one; a gone session's brief is still served by its full id. `parsed.plan` is a **deprecated** alias of `parsed.todos` (the section was called Plan), kept for one release |
+| GET | `/api/tasks[?refresh=1]` | My tasks, from the server the browser asked (not a host route: the credentials are this server's `web.tasks`): `{ source: "productive", fetchedAt, stale, error, truncated, count, tasks: [{ id, number, title, url, project, status, statusCategory: "notStarted"\|"started"\|"closed"\|null, statusColor, projectColor, dueDate: "YYYY-MM-DD"\|null, updatedAt (ms)\|null }] }` — open tasks assigned to you, most recently updated first; `statusColor` / `projectColor` are Productive palette names (`canary`, `orange`, `fuchsia`, `lime-green`, `blue`, `electric`, `burgundy`, `celtic-blue`, `turquoise`, `concrete`, `logan`, `yellow`, `azure`, `red`, `green`, `cyan`, `white` — the workflow status's `color_id` / the project's `project_color_id` indexes this list) or null (no project colour set; no status); cached 60 s (`refresh=1` skips it), a failed refresh serves the last answer with `stale: true` + `error`. 501 when not configured or no token is found, 502 when Productive rejects the token or fails, 504 on its timeout |
+| GET | `/api/tasks/:id/statuses` | the workflow statuses one of your open tasks (in `/api/tasks`; else 404, a non-numeric id 400) may move to — its project's workflow, the only ones Productive accepts: `{ taskId, projectId, current, statuses: [{ id, name, category: "notStarted"\|"started"\|"closed"\|null, color (palette name), position }] }` in Productive's order; read-only, statuses cached 10 min per project. 501 / 502 / 504 as `/api/tasks` |
+| POST | `/api/tasks/:id/status` `{ statusId }` | **writes to Productive**: `PATCH /tasks/:id` with the `workflow_status` relationship, after checking `statusId` (numeric) is one of the task's workflow statuses (re-read, else 400; not one of your open tasks 404). `{ ok: true, changed, task }` — `task` in the `/api/tasks` shape, re-read after the change; already there → `changed: false`, nothing written. The tasks cache is dropped. 409 when Productive refuses the change (422 / 403, e.g. an archived workflow), 502 / 504 as above |
 | GET | `/api/hosts/:host/notes/{tree,search,file,raw}` | the notes explorer (`web.notes`): the file list, `?q=` search with snippets + match ranges, `?path=` one note (frontmatter split, encrypted blocks withheld), `?path=` an image; 501 when the host has no `web.notes.root` |
 | PUT | `/api/hosts/:host/sessions/:id/brief` | `{ markdown }` → a human edit (sets `editedAt`) → the same shape |
 | GET | `/api/hosts/:host/stacks` | `fleet --local stack list --json` → `{ host, stacks: [StackView + editorUrl] }` ([session stacks](#session-stacks); `editorUrl` for `absCwd`, built like briefs' via `lib/editor.mjs`) |
@@ -424,6 +549,7 @@ JSON over HTTP, errors as `{ "error": "..." }`. At a high level:
 | GET | `/api/hosts/:host/dormant` | [session recovery](#session-recovery): `fleet --local restore --json` → `{ host, bootId, dormant: [DormantView], closed: [ClosedView] }` (`closed`: [recently closed](#recently-closed), from CLIs that know it); 501 when this host's CLI has no `restore` |
 | POST | `/api/hosts/:host/dormant/restore` | `{ target, dryRun? }` (a dormant tmux name or session id, one line ≤ 200 chars) or `{ all: true, dryRun? }` → `fleet --local restore [--dry-run] (-- <target> \| --all) --json` → `{ host, restored, failed }`. Starts agents, like spawn: **409** `{ error, candidates }` when the target is ambiguous (exit 2), 404 no match (exit 3), 502 `{ error, restored: [], failed }` when nothing came back; a partial `--all` is 200 with `failed` filled. The fleet list (and a stack sync) refresh as the sessions register. Proxy timeout 6 min |
 | POST | `/api/hosts/:host/dormant/forget` | `{ target }` or `{ all: true }` → `fleet --local restore (--forget=<target> \| --forget-all) --json` → `{ host, forgotten }`; 409 / 404 as restore |
+| GET | `/api/hosts/:host/dormant/sessions/:id/messages` | the read-only chat of a [recently closed](#recently-closed) or dormant session: `:id` must be a Claude session in this host's `fleet --local restore --json` (its cwd and harness come from that record, never from the request; the transcript is read only from that harness's own directory) → the `messages` shape with `status: "closed" \| "dormant"`, `backend: null` and `record: { pool, kind, target, name, title, sessionName, cwd, harness, since, closedAt, tmuxSession }`; `?limit` as `messages`; 404 not such a session / no transcript, 400 a malformed id |
 | | | Both POSTs take `closed: true` for a [recently closed](#recently-closed) entry (→ `--closed`); `{ all: true, closed: true }` is a 400 on restore (closed ones are resumed one at a time), allowed on forget. A CLI without `--closed` → 501 |
 | POST | `/api/hosts/:host/sessions/:id/brief/regenerate` | `{}` → **202** `{ host, id, started, queued, generating: true }`, the model call runs in the background (poll GET); **429** `{ error, retryAfterMs }` at the hourly cap |
 
@@ -491,7 +617,13 @@ The web Board view shows sessions as columns of work streams, and nobody maintai
 - **Hand edits win.** Renaming a group on the Board locks its label (never renamed, never merged
   away); a session dragged to another group is a `manual` assignment the passes never touch.
   A group made on the Board (`manual`) stays even when empty, until the user deletes it.
-  Column order is the UI's (`fleet.boardOrder`, per browser), not part of the state.
+- **Default group.** "Make default" on a group (`State.defaultGroup`, by id: a rename keeps it,
+  deleting the group clears it) turns classification off: each pass puts every session the user
+  didn't place — new, or in a model / fallback group — into it as a `default` assignment (kept like
+  `manual`, never reclassified), no model call, and the emptied groups vanish. The UI shows a live
+  session no group claims in the default group's column right away (not under Ungrouped).
+  Column and card order are the UI's (`fleet.boardOrder`, `fleet.cardOrder`, per browser), not
+  part of the state.
 - **Fallback.** Model disabled, missing, logged out, or answering garbage (one retry on an
   unparseable answer, none on a failed call): group by repository, marked `fallback`, reclassified
   once the model is back. The UI does the same grouping client-side when no server runs grouping.

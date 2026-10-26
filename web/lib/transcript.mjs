@@ -52,6 +52,107 @@ export async function locateTranscript(cwd, sessionId, home = claudeHome()) {
   return null;
 }
 
+// ------------------------------------------------------------------ closed / dormant sessions
+
+/** A session id as a transcript file name may carry it (no separators, no dots). */
+export const TRANSCRIPT_ID_RE = /^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/;
+
+/** Codex's home, as the fleet CLI's `harness::codex_home` resolves it. */
+export function codexHome() {
+  return process.env.CODEX_HOME || path.join(os.homedir(), '.codex');
+}
+
+/** pi's agent dir, as the fleet CLI's `harness::pi_home` resolves it. */
+export function piHome() {
+  return process.env.PI_CODING_AGENT_DIR || path.join(os.homedir(), '.pi', 'agent');
+}
+
+/** Mirror of the fleet CLI's `pi_dir_name`: `/Users/me/Code/app` → `--Users-me-Code-app--`. */
+export function piDirName(cwd) {
+  return `--${String(cwd).replace(/^[/\\]+/, '').replace(/[/\\:]/g, '-')}--`;
+}
+
+async function listDir(dir) {
+  try {
+    return await fs.readdir(dir, { withFileTypes: true });
+  } catch {
+    return [];
+  }
+}
+
+/** `file`, symlinks resolved, when it is a regular file inside `root` (also resolved); else null. */
+export async function insideRoot(root, file) {
+  try {
+    const [r, f] = await Promise.all([fs.realpath(root), fs.realpath(file)]);
+    const rel = path.relative(r, f);
+    if (!rel || rel.startsWith('..') || path.isAbsolute(rel)) return null;
+    return (await fs.stat(f)).isFile() ? f : null;
+  } catch {
+    return null;
+  }
+}
+
+/** Codex: `<home>/sessions/YYYY/MM/DD/rollout-<stamp>-<id>.jsonl`, any day. */
+async function findCodexTranscript(id, home) {
+  const root = path.join(home, 'sessions');
+  const suffix = `-${id}.jsonl`;
+  for (const y of await listDir(root)) {
+    if (!y.isDirectory()) continue;
+    for (const m of await listDir(path.join(root, y.name))) {
+      if (!m.isDirectory()) continue;
+      for (const d of await listDir(path.join(root, y.name, m.name))) {
+        if (!d.isDirectory()) continue;
+        const dir = path.join(root, y.name, m.name, d.name);
+        const f = (await listDir(dir)).find((e) => e.name.startsWith('rollout-') && e.name.endsWith(suffix));
+        if (f) return path.join(dir, f.name);
+      }
+    }
+  }
+  return null;
+}
+
+/** pi: `<home>/sessions/<pi dir of cwd>/<stamp>_<id>.jsonl`, else any cwd's directory. */
+async function findPiTranscript(cwd, id, home) {
+  const root = path.join(home, 'sessions');
+  const suffix = `_${id}.jsonl`;
+  const own = cwd ? piDirName(cwd) : null;
+  const dirs = (await listDir(root)).filter((e) => e.isDirectory()).map((e) => e.name);
+  for (const name of own && dirs.includes(own) ? [own, ...dirs.filter((n) => n !== own)] : dirs) {
+    const f = (await listDir(path.join(root, name))).find((e) => e.name.endsWith(suffix));
+    if (f) return path.join(root, name, f.name);
+  }
+  return null;
+}
+
+/**
+ * The transcript of a session that is no longer running (a closed or dormant record):
+ * `{ harness, file }` or null. Looked up by id under that harness's own transcript directory
+ * only — Claude `<claude home>/projects`, Codex `<codex home>/sessions`, pi
+ * `<pi home>/sessions` — and only returned when the resolved file lies inside it.
+ */
+export async function locateRecordTranscript({ sessionId, cwd = null, harness = 'claude' }, homes = {}) {
+  const id = String(sessionId ?? '');
+  if (!TRANSCRIPT_ID_RE.test(id)) return null;
+  const h = PARSERS[harness] ? harness : 'claude';
+  let root;
+  let found;
+  if (h === 'codex') {
+    const home = homes.codex ?? codexHome();
+    root = path.join(home, 'sessions');
+    found = await findCodexTranscript(id, home);
+  } else if (h === 'pi') {
+    const home = homes.pi ?? piHome();
+    root = path.join(home, 'sessions');
+    found = await findPiTranscript(cwd, id, home);
+  } else {
+    const home = homes.claude ?? claudeHome();
+    root = path.join(home, 'projects');
+    found = await locateTranscript(cwd, id, home);
+  }
+  const file = found ? await insideRoot(root, found) : null;
+  return file ? { harness: h, file } : null;
+}
+
 /** Read at most the last `maxBytes` of a file, dropping a leading partial line. */
 export async function readTail(file, maxBytes = MAX_TAIL_BYTES) {
   const stat = await fs.stat(file);
@@ -301,8 +402,8 @@ const PARSERS = { claude: parseTranscript, codex: parseCodexTranscript, pi: pars
  * Cached transcript reader. `messages(session, limit)` returns the last `limit` chat
  * messages of a `fleet list --json` session object ({ session_id, cwd }).
  */
-export function createTranscriptReader({ home = claudeHome(), maxBytes = MAX_TAIL_BYTES } = {}) {
-  const cache = new Map(); // sessionId -> { file, size, mtimeMs, messages, truncated }
+export function createTranscriptReader({ home = claudeHome(), codexHome: codexDir = null, piHome: piDir = null, maxBytes = MAX_TAIL_BYTES } = {}) {
+  const cache = new Map(); // cache key -> { file, size, mtimeMs, messages, truncated }
 
   async function load(session) {
     const id = session.session_id;
@@ -315,15 +416,19 @@ export function createTranscriptReader({ home = claudeHome(), maxBytes = MAX_TAI
         : typeof session.transcript === 'string' && session.transcript
           ? session.transcript
           : null;
-    if (!file) return null;
+    return file ? loadFile(id, harness, file) : null;
+  }
+
+  async function loadFile(key, harness, file) {
+    const cached = cache.get(key);
     let stat;
     try {
       stat = await fs.stat(file);
     } catch {
-      cache.delete(id);
+      cache.delete(key);
       return null;
     }
-    if (cached && cached.size === stat.size && cached.mtimeMs === stat.mtimeMs) return cached;
+    if (cached && cached.file === file && cached.size === stat.size && cached.mtimeMs === stat.mtimeMs) return cached;
     const tail = await readTail(file, maxBytes);
     const fresh = {
       file,
@@ -332,17 +437,31 @@ export function createTranscriptReader({ home = claudeHome(), maxBytes = MAX_TAI
       truncated: tail.truncated,
       messages: PARSERS[harness](tail.text),
     };
-    cache.set(id, fresh);
+    cache.set(key, fresh);
     return fresh;
   }
+
+  const view = (data, limit) => {
+    const total = data.messages.length;
+    const slice = limit > 0 ? data.messages.slice(-limit) : data.messages;
+    return { messages: slice, total, truncated: data.truncated || slice.length < total, file: data.file, updatedAt: data.mtimeMs };
+  };
 
   return {
     async messages(session, limit = 60) {
       const data = await load(session);
-      if (!data) return null;
-      const total = data.messages.length;
-      const slice = limit > 0 ? data.messages.slice(-limit) : data.messages;
-      return { messages: slice, total, truncated: data.truncated || slice.length < total, file: data.file, updatedAt: data.mtimeMs };
+      return data ? view(data, limit) : null;
+    },
+    /**
+     * A closed or dormant session's messages, same shape as `messages` (+ `harness`):
+     * `record` = `{ sessionId, cwd, harness }` from the server's own record, never a client
+     * path — see locateRecordTranscript. Null when it has no transcript under its harness's dir.
+     */
+    async recordMessages(record, limit = 60) {
+      const found = await locateRecordTranscript(record, { claude: home, codex: codexDir ?? undefined, pi: piDir ?? undefined });
+      if (!found) return null;
+      const data = await loadFile(`record:${found.harness}:${record.sessionId}`, found.harness, found.file);
+      return data ? { ...view(data, limit), harness: found.harness } : null;
     },
   };
 }

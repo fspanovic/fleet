@@ -1,9 +1,10 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, mkdirSync, readdirSync, readFileSync, realpathSync, rmSync, symlinkSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, readdirSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { createSpawner, isWithin, launchCommand, paneTail, resolveAllowedDir, sanitizeName, shq, shqTyped, validateSpawnRequest } from '../lib/spawn.mjs';
+import { WORDS, pickName, registryNames } from '../lib/names.mjs';
 
 test('shq quotes like the fleet CLI', () => {
   assert.equal(shq('a b'), "'a b'");
@@ -53,7 +54,7 @@ test('validateSpawnRequest defaults, sanitizes and rejects bad input', () => {
   assert.equal(ok.name, 'my-job');
   assert.equal(ok.dir, '/tmp');
   const auto = validateSpawnRequest({}, { spawnDirs: ['/tmp'] });
-  assert.match(auto.name, /^fw-\d{6}$/);
+  assert.equal(auto.name, null, 'the spawner picks a word');
   assert.equal(auto.nameGiven, false);
   assert.equal(ok.nameGiven, true);
   assert.equal(validateSpawnRequest({ name: '!!!' }, { spawnDirs: ['/tmp'] }).nameGiven, false, 'nothing usable typed');
@@ -88,9 +89,78 @@ test('spawner types --model when one was picked', async () => {
     return { stdout: '', stderr: '' };
   };
   const sp = createSpawner({ run, tmux: 'tmux', launcher: 'claude', sleep: async () => {} });
-  const res = await sp.spawn({ name: 'fw-101010', dir: '/tmp', prompt: 'go', nameGiven: false, model: 'claude-haiku-4-5-20251001' });
-  assert.deepEqual(calls[2], ['tmux', 'send-keys', '-t', 'fw-101010:', '-l', '--', "claude --model 'claude-haiku-4-5-20251001' 'go'"]);
+  const res = await sp.spawn({ name: 'job', dir: '/tmp', prompt: 'go', model: 'claude-haiku-4-5-20251001' });
+  assert.deepEqual(calls[2], ['tmux', 'send-keys', '-t', 'job:', '-l', '--', "claude --model 'claude-haiku-4-5-20251001' -n 'job' 'go'"]);
   assert.equal(res.model, 'claude-haiku-4-5-20251001');
+});
+
+test('names: whimsical lowercase words, the same list as the fleet CLI', () => {
+  assert.ok(WORDS.length >= 200, `${WORDS.length} words`);
+  for (const w of WORDS) assert.match(w, /^[a-z]{1,16}$/);
+  assert.equal(new Set(WORDS).size, WORDS.length, 'a word is listed twice');
+  const rs = readFileSync(new URL('../../crates/fleet/src/core/words.rs', import.meta.url), 'utf8');
+  const body = rs.split('pub const WORDS: &[&str] = &[')[1].split('];')[0];
+  assert.deepEqual([...body.matchAll(/"([a-z]+)"/g)].map((m) => m[1]), WORDS);
+});
+
+test('pickName skips taken names, and suffixes -2, -3 once every word is taken', () => {
+  const taken = WORDS.slice(1);
+  for (const r of [0, 0.5, 0.999]) assert.equal(pickName(taken, () => r), WORDS[0]);
+  assert.ok(WORDS.includes(pickName()));
+  assert.notEqual(pickName([], () => 0), pickName([], () => 0.5), 'random picks the word');
+  const second = pickName(WORDS, () => 0.3);
+  assert.match(second, /^[a-z]+-2$/);
+  assert.ok(WORDS.includes(second.slice(0, -2)));
+  assert.match(pickName([...WORDS, ...WORDS.map((w) => `${w}-2`)], () => 0.3), /^[a-z]+-3$/);
+});
+
+test('registryNames reads every name in the Claude session registry, skipping junk', async () => {
+  const home = mkdtempSync(path.join(os.tmpdir(), 'fleet-names-'));
+  try {
+    assert.deepEqual(await registryNames(home), [], 'no registry yet');
+    mkdirSync(path.join(home, 'sessions'));
+    writeFileSync(path.join(home, 'sessions', '1.json'), JSON.stringify({ pid: 1, name: 'kelpie', nameSource: 'user' }));
+    writeFileSync(path.join(home, 'sessions', '2.json'), JSON.stringify({ pid: 2, name: 'work-28', nameSource: 'derived' }));
+    writeFileSync(path.join(home, 'sessions', '3.json'), '{ half-written');
+    writeFileSync(path.join(home, 'sessions', '4.json'), JSON.stringify({ pid: 4 }));
+    writeFileSync(path.join(home, 'sessions', 'notes.txt'), 'ballyhoo');
+    assert.deepEqual((await registryNames(home)).sort(), ['kelpie', 'work-28']);
+  } finally {
+    rmSync(home, { recursive: true, force: true });
+  }
+});
+
+test('an unnamed spawn gets a word free in tmux and in Claude\'s registry, as tmux name and -n', async () => {
+  const home = mkdtempSync(path.join(os.tmpdir(), 'fleet-names-'));
+  try {
+    mkdirSync(path.join(home, 'sessions'));
+    writeFileSync(path.join(home, 'sessions', '1.json'), JSON.stringify({ pid: 1, name: WORDS[1] }));
+    const calls = [];
+    const run = async (bin, args) => {
+      calls.push([bin, ...args]);
+      if (args[0] === 'list-sessions') return { stdout: `${WORDS[0]}\nmain\n`, stderr: '' };
+      if (args[0] === 'has-session') throw new Error('no such session');
+      return { stdout: '', stderr: '' };
+    };
+    const random = () => 0; // the first free word
+    const sp = createSpawner({ run, tmux: 'tmux', launcher: 'claude', sleep: async () => {}, claudeHome: home, random });
+    assert.equal(await sp.freshName(), WORDS[2]);
+    calls.length = 0;
+    const res = await sp.spawn({ name: null, nameGiven: false, dir: '/tmp', prompt: 'go', model: 'claude-haiku-4-5-20251001' });
+    const word = WORDS[2];
+    assert.equal(res.name, word);
+    assert.equal(res.tmuxSession, word);
+    assert.deepEqual(calls[0], ['tmux', 'list-sessions', '-F', '#{session_name}']);
+    assert.deepEqual(calls[2], ['tmux', 'new-session', '-d', '-s', word, '-c', '/tmp']);
+    assert.deepEqual(calls[3], ['tmux', 'send-keys', '-t', `${word}:`, '-l', '--', `claude --model 'claude-haiku-4-5-20251001' -n '${word}' 'go'`]);
+    // Codex: the word names the tmux session only.
+    calls.length = 0;
+    const cx = await sp.spawn({ name: null, nameGiven: false, dir: '/tmp', prompt: 'go', harness: 'codex' });
+    assert.equal(cx.tmuxSession, word);
+    assert.deepEqual(calls[3], ['tmux', 'send-keys', '-t', `${word}:`, '-l', '--', "codex 'go'"]);
+  } finally {
+    rmSync(home, { recursive: true, force: true });
+  }
 });
 
 test('codex and pi: their launcher, --model, -n for pi only; a bad harness is refused', () => {
@@ -237,18 +307,4 @@ test('resolveAllowedDir allows roots and subdirs, rejects .. and symlink escapes
   // No spawnDirs: $HOME subtree only.
   assert.equal(await resolveAllowedDir(path.join(root, 'sub'), [], { home: base }), path.join(root, 'sub'));
   await assert.rejects(resolveAllowedDir('/', [], { home: base }), bad);
-});
-
-test('spawner omits -n for an auto-generated name', async () => {
-  const calls = [];
-  const run = async (bin, args) => {
-    calls.push(args);
-    if (args[0] === 'has-session') throw new Error('no such session');
-    return { stdout: '', stderr: '' };
-  };
-  const sp = createSpawner({ run, sleep: async () => {} });
-  const res = await sp.spawn({ name: 'fw-101010', dir: '/tmp', prompt: 'go', nameGiven: false });
-  const typed = calls.find((a) => a[0] === 'send-keys' && a.includes('-l'));
-  assert.equal(typed.at(-1), "claude 'go'");
-  assert.equal(res.tmuxSession, 'fw-101010');
 });

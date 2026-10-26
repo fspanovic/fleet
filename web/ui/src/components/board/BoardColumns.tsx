@@ -4,11 +4,13 @@ import { LayersIcon, PlusIcon } from 'lucide-react'
 import type { Session } from '@/api/types'
 import { BoardCard } from '@/components/board/BoardCard'
 import { DormantCard } from '@/components/board/DormantCard'
+import { DefaultGroupMark, GroupColumnMenu } from '@/components/board/GroupColumnMenu'
 import { InlineEdit, InlineField } from '@/components/InlineEdit'
 import { StatusSummaryDots } from '@/components/board/StatusSummaryDots'
 import { StackColumnMenu } from '@/components/stack/StackColumnMenu'
+import type { MoveCard } from '@/hooks/useGroups'
 import { useRenameStack, useStackLabel } from '@/hooks/useStackLabels'
-import { PENDING_PREFIX, memberId, type BoardColumn, type GroupEdit } from '@/lib/groups'
+import { PENDING_PREFIX, canMoveOutOf, cardDropBefore, isGroupColumn as isGroup, memberId, type BoardColumn, type GroupEdit } from '@/lib/groups'
 import { MAX_STACK_LABEL, stackLabelChanged } from '@/lib/stacks'
 import { sessionKey } from '@/lib/shortcuts'
 import { cn } from '@/lib/utils'
@@ -19,12 +21,39 @@ const GROUP_LABEL_MAX = 48
 /** Our drags carry this type, so text, links or files dragged over the board are ignored. */
 const DRAG_TYPE = 'application/x-fleet-board'
 
-/** A column that is a group: sessions can be dropped on it, it can be renamed through `onEdit` (not Ungrouped, not a session stack — a stack renames through its own route, StackColumnTitle). */
-const isGroup = (c: BoardColumn) => !c.ungrouped && c.source !== 'stack'
+/** A card (`movable`: it may leave its column — a group's or Ungrouped's card on an editable board) or a column header. */
+type Drag = { kind: 'session'; session: Session; from: string; movable: boolean } | { kind: 'column'; id: string }
+/** A card's landing spot in a column: before card `before` (null: the end); `y` = the drop line's offset in the card list (null: no cards). */
+type Slot = { before: string | null; y: number | null }
+/** Where the drag would land: a column (a card at `card`, or a column drop on one of its sides) or the "New group" zone. */
+type Over = { id: string; side?: 'before' | 'after'; card?: Slot } | { id: 'new' }
 
-type Drag = { kind: 'session'; session: Session; from: string } | { kind: 'column'; id: string }
-/** Where the drag would land: a column (a session drop, or a column drop on one of its sides) or the "New group" zone. */
-type Over = { id: string; side?: 'before' | 'after' } | { id: 'new' }
+const sameOver = (a: Over | null, b: Over | null) =>
+  a?.id === b?.id &&
+  (a && 'side' in a ? a.side : undefined) === (b && 'side' in b ? b.side : undefined) &&
+  (a && 'card' in a ? a.card?.before : undefined) === (b && 'card' in b ? b.card?.before : undefined) &&
+  (a && 'card' in a ? a.card?.y : undefined) === (b && 'card' in b ? b.card?.y : undefined)
+
+/**
+ * Where a card dragged over column section `section` would land, from the pointer's height
+ * against the drawn cards; undefined when it would stay where it is (its own column).
+ */
+function cardSlot(section: HTMLElement, clientY: number, key: string): Slot | undefined {
+  const list = section.querySelector<HTMLElement>('[data-card-list]')
+  const cards = list ? [...list.querySelectorAll<HTMLElement>(':scope > [data-session-key]')] : []
+  const shown = cards.map((el) => el.dataset.sessionKey ?? '')
+  const mids = cards.map((el) => {
+    const r = el.getBoundingClientRect()
+    return r.top + r.height / 2
+  })
+  const before = cardDropBefore(shown, mids, clientY, key)
+  if (before === undefined) return undefined
+  const i = before == null ? cards.length : shown.indexOf(before)
+  // Centred in the 6px gap (gap-1.5) between cards, like the column drop line in the 12px gap;
+  // above the first card it sits on its top edge (the list scrolls, so anything above 0 is clipped).
+  const y = i < cards.length ? Math.max(0, cards[i].offsetTop - 4) : cards.length ? cards[i - 1].offsetTop + cards[i - 1].offsetHeight + 2 : null
+  return { before, y }
+}
 
 export interface BoardColumnsProps {
   columns: BoardColumn[]
@@ -37,15 +66,20 @@ export interface BoardColumnsProps {
   onEdit: (e: GroupEdit) => void
   /** Move column `id` just before `before` (null: to the end). */
   onMoveColumn: (id: string, before: string | null) => void
+  /** Place card `key` in `column` just before card `before` (null: at the end) — useBoardColumns' moveCard. */
+  onMoveCard: MoveCard
 }
 
 /**
- * The board's Kanban columns. Drag a card onto another column to move the session there (or
- * onto "New group" to start one), drag a column's header to reorder the columns, click a
+ * The board's Kanban columns. Drag a card up or down to place it in its column (any column: it is
+ * only the view's order), onto another column to move the session there at that spot (or onto
+ * "New group" to start one), drag a column's header to reorder the columns, click a
  * column's name to rename it (a stack column renames the stack). "+ New group" at the end makes an empty column (a group of the
- * user's: it stays until "Delete group"). Ungrouped takes no drops and stays last.
+ * user's: it stays until "Delete group"). A group's ⋯ makes it the default group (marked; new sessions land there).
+ * A card from a group or Ungrouped moves into any group; Ungrouped and stack columns take no cards from other columns, and a
+ * stack's cards stay in it. Ungrouped stays last.
  */
-export function BoardColumns({ columns, now, cursorKey, selectedKey, onOpen, editable, onEdit, onMoveColumn }: BoardColumnsProps) {
+export function BoardColumns({ columns, now, cursorKey, selectedKey, onOpen, editable, onEdit, onMoveColumn, onMoveCard }: BoardColumnsProps) {
   const [drag, setDrag] = useState<Drag | null>(null)
   const [over, setOver] = useState<Over | null>(null)
   /** A session dropped on "New group", waiting for the group's name. */
@@ -68,7 +102,12 @@ export function BoardColumns({ columns, now, cursorKey, selectedKey, onOpen, edi
   /** Can the current drag land on column `c`, and where? */
   const target = (e: DragEvent, c: BoardColumn): Over | null => {
     if (!drag || !ours(e)) return null
-    if (drag.kind === 'session') return isGroup(c) && c.id !== drag.from ? { id: c.id } : null
+    if (drag.kind === 'session') {
+      const own = c.id === drag.from
+      if (!own && !(drag.movable && isGroup(c))) return null
+      const card = cardSlot(e.currentTarget as HTMLElement, e.clientY, sessionKey(drag.session))
+      return card ? { id: c.id, card } : null
+    }
     if (c.id === drag.id) return null
     if (c.ungrouped) return { id: c.id, side: 'before' }
     const r = e.currentTarget.getBoundingClientRect()
@@ -77,10 +116,14 @@ export function BoardColumns({ columns, now, cursorKey, selectedKey, onOpen, edi
 
   const onColumnDragOver = (e: DragEvent, c: BoardColumn) => {
     const t = target(e, c)
-    if (!t) return
+    if (!t) {
+      // Back over the card's own spot: no drop line.
+      if (over?.id === c.id) setOver(null)
+      return
+    }
     e.preventDefault()
     e.dataTransfer.dropEffect = 'move'
-    if (over?.id !== t.id || ('side' in over && over.side) !== ('side' in t && t.side)) setOver(t)
+    if (!sameOver(over, t)) setOver(t)
   }
   const onLeave = (e: DragEvent) => {
     if (!e.currentTarget.contains(e.relatedTarget as Node | null)) setOver(null)
@@ -90,7 +133,10 @@ export function BoardColumns({ columns, now, cursorKey, selectedKey, onOpen, edi
     if (!t || !drag) return
     e.preventDefault()
     if (drag.kind === 'session') {
-      onEdit({ op: 'move', host: drag.session.host, session: memberId(drag.session), to: c.id })
+      const moved = c.id !== drag.from
+      if (moved) onEdit({ op: 'move', host: drag.session.host, session: memberId(drag.session), to: c.id })
+      const before = 'card' in t ? (t.card?.before ?? null) : null
+      onMoveCard(c.id, c.sessions.map(sessionKey), sessionKey(drag.session), before, moved ? drag.from : undefined)
     } else {
       // "After c" is "before the next column" (the dragged one left out).
       const rest = columns.filter((x) => x.id !== drag.id)
@@ -101,13 +147,16 @@ export function BoardColumns({ columns, now, cursorKey, selectedKey, onOpen, edi
     end()
   }
 
-  const showNew = editable && drag?.kind !== 'column'
+  const showNew = editable && (!drag || (drag.kind === 'session' && drag.movable))
 
   return (
     <>
       {columns.map((c) => {
         const hit = over && over.id === c.id ? over : null
         const side = hit && 'side' in hit ? hit.side : undefined
+        const slot = hit && 'card' in hit ? hit.card : undefined
+        // A card from another column: the column lights up (the session moves) besides the drop line.
+        const moveHit = !!slot && drag?.kind === 'session' && drag.from !== c.id
         const canDragColumn = !c.ungrouped && renaming !== c.id
         return (
           <section
@@ -117,11 +166,10 @@ export function BoardColumns({ columns, now, cursorKey, selectedKey, onOpen, edi
             onDragLeave={onLeave}
             onDrop={(e) => onColumnDrop(e, c)}
             className={cn(
-              'relative flex max-h-full w-72 shrink-0 flex-col rounded-xl border bg-muted/30 transition-colors',
-              c.ungrouped && 'border-dashed',
-              c.stack && 'border-primary/25',
+              // An open lane: no box, just its header row over the floating cards; a drop lights it up.
+              'relative flex max-h-full w-[20rem] shrink-0 animate-enter flex-col rounded-[1.25rem] transition-[background-color,box-shadow,opacity] duration-(--dur-base)',
               drag?.kind === 'column' && drag.id === c.id && 'opacity-50',
-              hit && !side && 'border-primary/60 bg-accent/50',
+              moveHit && 'bg-primary/8 ring-1 ring-primary/40',
             )}
           >
             {side ? (
@@ -131,7 +179,7 @@ export function BoardColumns({ columns, now, cursorKey, selectedKey, onOpen, edi
               draggable={canDragColumn}
               onDragStart={canDragColumn ? (e) => start(e, { kind: 'column', id: c.id }) : undefined}
               onDragEnd={end}
-              className={cn('shrink-0 px-3 pt-2.5 pb-2', canDragColumn && 'cursor-grab active:cursor-grabbing')}
+              className={cn('shrink-0 px-4 pt-1 pb-1.5', canDragColumn && 'cursor-grab active:cursor-grabbing')}
               title={c.description ?? undefined}
             >
               <div className="flex min-w-0 items-center gap-2">
@@ -147,15 +195,20 @@ export function BoardColumns({ columns, now, cursorKey, selectedKey, onOpen, edi
                     onRename={(label) => onEdit({ op: 'rename', id: c.id, label })}
                   />
                 )}
+                {c.isDefault ? <DefaultGroupMark /> : null}
                 <StatusSummaryDots summary={c.summary} />
-                <span className="rounded-md bg-muted px-1.5 text-[0.6875rem] text-muted-foreground tabular-nums">{c.sessions.length}</span>
+                <span className="rounded-full bg-fill px-1.75 text-2xs font-medium text-muted-foreground tabular-nums">{c.sessions.length}</span>
                 {c.stack ? <StackColumnMenu stack={c.stack} label={c.label} sessions={c.sessions} className="-my-1 -mr-1.5" /> : null}
+                {editable && isGroup(c) && !c.id.startsWith(PENDING_PREFIX) ? <GroupColumnMenu column={c} onEdit={onEdit} className="-my-1 -mr-1.5" /> : null}
               </div>
-              {c.description ? <p className="mt-0.5 line-clamp-2 text-[0.6875rem] text-dimmer">{c.description}</p> : null}
+              {c.description ? <p className="mt-0.5 line-clamp-2 text-2xs text-dimmer">{c.description}</p> : null}
             </header>
-            <div className="flex min-h-0 flex-col gap-1.5 overflow-x-hidden overflow-y-auto overscroll-y-contain px-2 pb-2">
+            <div data-card-list className="relative -mx-3 flex min-h-0 flex-col gap-3.5 overflow-x-hidden overflow-y-auto overscroll-y-contain px-3 pt-1.5 pb-6">
+              {slot && slot.y != null ? (
+                <div aria-hidden className="pointer-events-none absolute inset-x-2 h-0.5 rounded-full bg-primary" style={{ top: slot.y }} />
+              ) : null}
               {c.sessions.length === 0 && !c.dormant?.length ? (
-                <div className="flex items-center justify-between gap-2 rounded-lg border border-dashed px-3 py-3 text-xs text-dimmer">
+                <div className="flex items-center justify-between gap-2 rounded-[0.875rem] border border-dashed border-hairline px-3.5 py-3.5 text-xs text-dimmer">
                   <span>Drag sessions here</span>
                   {!c.id.startsWith(PENDING_PREFIX) ? (
                     <button
@@ -178,11 +231,11 @@ export function BoardColumns({ columns, now, cursorKey, selectedKey, onOpen, edi
                     selected={key === selectedKey}
                     cursor={key === cursorKey && key !== selectedKey}
                     onOpen={onOpen}
-                    drag={
-                      editable && isGroup(c)
-                        ? { dragging: drag?.kind === 'session' && sessionKey(drag.session) === key, onStart: (e) => start(e, { kind: 'session', session: s, from: c.id }), onEnd: end }
-                        : undefined
-                    }
+                    drag={{
+                      dragging: drag?.kind === 'session' && sessionKey(drag.session) === key,
+                      onStart: (e) => start(e, { kind: 'session', session: s, from: c.id, movable: editable && canMoveOutOf(c) }),
+                      onEnd: end,
+                    }}
                   />
                 )
               })}
@@ -195,21 +248,21 @@ export function BoardColumns({ columns, now, cursorKey, selectedKey, onOpen, edi
         <section
           aria-label="New group"
           onDragOver={(e) => {
-            if (drag?.kind !== 'session' || !ours(e)) return
+            if (drag?.kind !== 'session' || !drag.movable || !ours(e)) return
             e.preventDefault()
             e.dataTransfer.dropEffect = 'move'
             if (over?.id !== 'new') setOver({ id: 'new' })
           }}
           onDragLeave={onLeave}
           onDrop={(e) => {
-            if (drag?.kind !== 'session' || !ours(e)) return
+            if (drag?.kind !== 'session' || !drag.movable || !ours(e)) return
             e.preventDefault()
             setNaming({ session: drag.session })
             end()
           }}
           className={cn(
-            'flex w-72 shrink-0 flex-col gap-2 rounded-xl border border-dashed p-3 text-sm text-muted-foreground transition-colors',
-            over?.id === 'new' && 'border-primary/60 bg-accent/50 text-foreground',
+            'mt-9 flex w-[20rem] shrink-0 flex-col gap-2 rounded-[1rem] border border-dashed border-hairline p-3 text-sm text-muted-foreground transition-colors hover:bg-fill-hover',
+            over?.id === 'new' && 'border-primary/50 bg-primary/8 text-foreground',
           )}
         >
           {naming ? (
@@ -271,7 +324,7 @@ function ColumnTitle({
           if (label && label !== c.label) onRename(label)
         }}
         onCancel={() => onEditing(false)}
-        className={cn('text-sm font-semibold', c.ungrouped && 'text-muted-foreground')}
+        className={cn('text-[0.9375rem] font-semibold tracking-(--tracking-heading)', c.ungrouped && 'text-muted-foreground')}
         label="Group name"
         hint="Rename group"
         maxLength={GROUP_LABEL_MAX}
@@ -308,7 +361,7 @@ function StackColumnTitle({
           if (stackLabelChanged(text, label)) void rename(stack.host, stack.id, text)
         }}
         onCancel={() => onEditing(false)}
-        className={cn('text-sm font-semibold', saving && 'opacity-70')}
+        className={cn('text-[0.9375rem] font-semibold tracking-(--tracking-heading)', saving && 'opacity-70')}
         label="Stack name"
         hint="Rename stack"
         maxLength={MAX_STACK_LABEL}

@@ -1187,6 +1187,9 @@ pub struct DormantSession {
     pub name: Option<String>,
     pub title: Option<String>,
     pub cwd: Option<String>,
+    /// Which harness ran it; absent = Claude (what reads its transcript needs to know).
+    #[serde(skip_serializing_if = "is_claude")]
+    pub harness: Harness,
 }
 
 /// One dormant entry as the CLI and the web API show it (`fleet restore --json`).
@@ -1211,6 +1214,7 @@ fn session_view(c: &ClaudeSnap) -> DormantSession {
         name: c.name.clone(),
         title: c.title.clone(),
         cwd: c.cwd.clone(),
+        harness: c.harness,
     }
 }
 
@@ -2647,6 +2651,17 @@ garbage";
         let j = serde_json::to_value(api).unwrap();
         assert!(j.get("sessionId").is_none());
         assert_eq!(j["sessions"][0]["sessionId"], "aaaa1111-x");
+        assert!(j["sessions"][0].get("harness").is_none());
+    }
+
+    #[test]
+    fn a_view_names_a_non_claude_harness() {
+        let mut s = Snapshot::default();
+        let mut c = claude("dddd4444-w");
+        c.harness = Harness::Codex;
+        s.dormant.iterm = vec![c];
+        let j = serde_json::to_value(&dormant_views(&s)[0]).unwrap();
+        assert_eq!(j["sessions"][0]["harness"], "codex");
     }
 
     #[test]

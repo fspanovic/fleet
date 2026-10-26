@@ -1,21 +1,13 @@
 import { useRef, useState } from 'react'
-import {
-  ChevronLeftIcon,
-  FolderGit2Icon,
-  GitPullRequestDraftIcon,
-  GitPullRequestIcon,
-  MessageSquareIcon,
-  RefreshCwIcon,
-  SearchIcon,
-  TriangleAlertIcon,
-} from 'lucide-react'
+import { ChevronLeftIcon, CoffeeIcon, DumbbellIcon, GitPullRequestDraftIcon, GitPullRequestIcon, MegaphoneIcon, MonitorPlayIcon, RefreshCwIcon, SearchIcon, TargetIcon, TriangleAlertIcon, XIcon } from 'lucide-react'
 import { useLocation } from 'wouter'
 
 import type { PullRequest, Session } from '@/api/types'
 import { HostDot } from '@/components/HostBadge'
-import { ChecksIcon, PrSessionLink } from '@/components/PrChip'
+import { useMadrid } from '@/components/Madrid'
+import { Scoreboard } from '@/components/MadridMatch'
+import { PrCard } from '@/components/PrCard'
 import { PrDialog } from '@/components/PrDialog'
-import { PrMention } from '@/components/PrMention'
 import { ScreenHeader } from '@/components/ScreenHeader'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -25,7 +17,7 @@ import { usePrs } from '@/hooks/usePrs'
 import { useSwipeBack } from '@/hooks/useSwipeBack'
 import { relTime } from '@/lib/format'
 import { usePersistentState } from '@/hooks/usePersistentState'
-import { groupPrs, isOthersDraft, parsePrLocation, prHref, prRef, reviewLabel, ROT_TONE, waitingSince, type PrGroup } from '@/lib/prs'
+import { groupPrs, isOthersDraft, parsePrLocation, prHref, prRef, type PrGroup } from '@/lib/prs'
 import { cn } from '@/lib/utils'
 
 /**
@@ -36,6 +28,7 @@ import { cn } from '@/lib/utils'
  */
 export function PrsScreen({ layout = 'screen' }: { layout?: 'screen' | 'pane' }) {
   const pane = layout === 'pane'
+  const madrid = useMadrid()
   const [location, navigate] = useLocation()
   const { hosts, host, setHost, data, error, loading, refresh, refreshing, reload, links } = usePrs()
   // `#/prs/<owner>/<repo>/<n>`: that PR's dialog is open (session PR chips link here).
@@ -63,7 +56,7 @@ export function PrsScreen({ layout = 'screen' }: { layout?: 'screen' | 'pane' })
       title="Fetch from GitHub now"
       onClick={() => void refresh()}
       disabled={refreshing || !host}
-      className={cn('shrink-0', pane ? 'size-9 rounded-lg' : '-my-1.5 size-11 rounded-xl')}
+      className={cn('shrink-0 text-muted-foreground', pane ? 'size-9 rounded-full' : '-my-1.5 size-11 rounded-full')}
     >
       <RefreshCwIcon className={cn('size-5', refreshing && 'animate-spin')} />
     </Button>
@@ -80,9 +73,9 @@ export function PrsScreen({ layout = 'screen' }: { layout?: 'screen' | 'pane' })
             aria-checked={h === host}
             onClick={() => setHost(h)}
             className={cn(
-              'flex shrink-0 items-center gap-1.5 rounded-full border px-2.5 text-xs outline-none focus-visible:ring-2 focus-visible:ring-ring/50',
+              'flex shrink-0 items-center gap-1.5 rounded-full px-3 text-xs font-medium outline-none focus-visible:ring-2 focus-visible:ring-ring/50',
               pane ? 'h-7' : 'h-9',
-              h === host ? 'border-primary/40 bg-primary/10 text-foreground' : 'text-muted-foreground hover:bg-muted/60',
+              h === host ? 'bg-primary/12 text-foreground ring-1 ring-primary/30 ring-inset' : 'bg-fill text-muted-foreground hover:bg-fill-strong hover:text-foreground',
             )}
           >
             <HostDot host={h} />
@@ -94,14 +87,14 @@ export function PrsScreen({ layout = 'screen' }: { layout?: 'screen' | 'pane' })
 
   const filter = (
     <div className="relative w-full">
-      <SearchIcon className="pointer-events-none absolute top-1/2 left-2.5 size-4 -translate-y-1/2 text-muted-foreground" />
+      <SearchIcon className="pointer-events-none absolute top-1/2 left-3 size-4 -translate-y-1/2 text-dimmer" />
       <Input
         type="search"
         value={q}
         onChange={(e) => setQ(e.target.value)}
         placeholder="Filter by title, repo#123, author, branch"
         aria-label="Filter pull requests"
-        className="h-8 pl-8"
+        className={cn('rounded-full pl-9', pane ? 'h-8' : 'h-10')}
       />
     </div>
   )
@@ -113,9 +106,9 @@ export function PrsScreen({ layout = 'screen' }: { layout?: 'screen' | 'pane' })
       onClick={() => setShowDrafts(!showDrafts)}
       title={showDrafts ? "Hide other people's draft PRs" : "Show other people's draft PRs"}
       className={cn(
-        'flex shrink-0 items-center gap-1.5 rounded-full border px-2.5 text-xs outline-none focus-visible:ring-2 focus-visible:ring-ring/50',
+        'flex shrink-0 items-center gap-1.5 rounded-full px-3 text-xs font-medium outline-none focus-visible:ring-2 focus-visible:ring-ring/50',
         pane ? 'h-7' : 'h-9',
-        showDrafts ? 'border-primary/40 bg-primary/10 text-foreground' : 'text-muted-foreground hover:bg-muted/60',
+        showDrafts ? 'bg-primary/12 text-foreground ring-1 ring-primary/30 ring-inset' : 'bg-fill text-muted-foreground hover:bg-fill-strong hover:text-foreground',
       )}
     >
       <GitPullRequestDraftIcon className="size-3.5" />
@@ -147,7 +140,7 @@ export function PrsScreen({ layout = 'screen' }: { layout?: 'screen' | 'pane' })
   const skeleton = (
     <div className="space-y-2">
       {[0, 1, 2].map((i) => (
-        <div key={i} className="space-y-2 rounded-lg border p-3">
+        <div key={i} className="space-y-2 rounded-[0.875rem] bg-float p-3.5 shadow-float">
           <Skeleton className="h-3 w-1/3" />
           <Skeleton className="h-4 w-full" />
         </div>
@@ -171,29 +164,29 @@ export function PrsScreen({ layout = 'screen' }: { layout?: 'screen' | 'pane' })
 
   if (pane) {
     return (
-      <section aria-label="Pull requests" className="flex h-full min-w-0 flex-1 flex-col bg-background">
+      <section aria-label="Pull requests" className={cn('flex h-full min-w-0 flex-1 flex-col bg-background', madrid && 'madrid-board')}>
         <header
           data-tauri-drag-region="deep"
-          className="titlebar titlebar-lead flex shrink-0 items-center gap-2 border-b py-1.5 pr-2 pl-2 [--titlebar-pad:0.5rem]"
+          className="titlebar titlebar-lead flex shrink-0 items-center gap-2 bg-background/75 py-2 pr-3 pl-5 backdrop-blur-xl [--titlebar-pad:1.25rem]"
         >
-          <Button asChild variant="ghost" size="sm" className="shrink-0 text-muted-foreground">
-            <a href="#/" title="Back to the sessions (Esc)">
-              <ChevronLeftIcon /> Sessions
-            </a>
-          </Button>
-          <h1 className="flex shrink-0 items-center gap-1.5 text-[0.9375rem] font-bold">
+          <h1 className="flex shrink-0 items-center gap-2 text-lg font-bold tracking-(--tracking-display)">
             <GitPullRequestIcon className="size-4 text-muted-foreground" /> Pull requests
+            {madrid ? <span className="text-sm font-medium text-muted-foreground">· Match centre</span> : null}
           </h1>
           {hostPicker}
           <div className="mx-2 flex max-w-md min-w-0 flex-1">{filter}</div>
+          {madrid ? <Scoreboard /> : null}
           {draftsToggle}
           {refreshButton}
+          <Button variant="ghost" size="icon" aria-label="Close" title="Close (Esc)" onClick={() => navigate('/')} className="ml-auto size-9 shrink-0 rounded-full text-muted-foreground">
+            <XIcon className="size-5" />
+          </Button>
         </header>
-        <div className="shrink-0 px-4 pt-2">{status}</div>
-        <div className="flex min-h-0 flex-1 gap-3 overflow-x-auto px-4 pt-2 pb-4">
+        <div className="shrink-0 px-6 pt-1">{status}</div>
+        <div className="flex min-h-0 flex-1 items-start gap-6 overflow-x-auto px-6 pt-4 pb-4">
           {showSkeleton
             ? [0, 1, 2, 3].map((i) => (
-                <div key={i} className="w-80 shrink-0">
+                <div key={i} className="min-w-72 flex-1 basis-80">
                   {skeleton}
                 </div>
               ))
@@ -211,10 +204,10 @@ export function PrsScreen({ layout = 'screen' }: { layout?: 'screen' | 'pane' })
     <div ref={screenRef} className="flex min-h-app flex-col bg-background">
       <ScreenHeader>
         <div className="-ml-2 flex min-h-8 items-center gap-1">
-          <Button variant="ghost" size="icon" aria-label="Back" onClick={back} className="-my-1.5 size-11 shrink-0 rounded-xl">
+          <Button variant="ghost" size="icon" aria-label="Back" onClick={back} className="-my-1.5 size-11 shrink-0 rounded-full">
             <ChevronLeftIcon className="size-6" />
           </Button>
-          <h1 className="flex-1 text-xl font-bold tracking-tight">Pull requests</h1>
+          <h1 className="flex-1 text-2xl font-bold tracking-(--tracking-display)">Pull requests</h1>
           {refreshButton}
         </div>
         <div className="mt-2 space-y-2">
@@ -225,7 +218,7 @@ export function PrsScreen({ layout = 'screen' }: { layout?: 'screen' | 'pane' })
           </div>
         </div>
       </ScreenHeader>
-      <div className="mx-auto w-full max-w-lg space-y-5 px-4 pt-3 pb-[max(1.5rem,env(safe-area-inset-bottom))] md:max-w-2xl">
+      <div className="mx-auto w-full max-w-lg space-y-5 px-gutter pt-3 pb-[max(1.5rem,env(safe-area-inset-bottom))] md:max-w-2xl">
         {status}
         {showSkeleton ? skeleton : null}
         {groups
@@ -249,11 +242,34 @@ export function PrsScreen({ layout = 'screen' }: { layout?: 'screen' | 'pane' })
   )
 }
 
+// The columns as where the match is (Real Madrid palette).
+const BALL = <img src="/madrid-ball.svg" alt="" className="size-4 shrink-0" />
+const MATCH_STAGE: Record<PrGroup['id'], { icon: React.ReactNode; title: string }> = {
+  unseenMentions: { icon: <MegaphoneIcon className="madrid-stage-icon size-4 shrink-0" />, title: 'The fans call you' },
+  waitingOnMe: { icon: <MonitorPlayIcon className="madrid-stage-icon size-4 shrink-0" />, title: 'VAR: your call' },
+  reviewMine: { icon: BALL, title: 'In play' },
+  readyToMergeMine: { icon: <TargetIcon className="madrid-stage-icon size-4 shrink-0" />, title: 'Penalty: shoot' },
+  draftMine: { icon: <DumbbellIcon className="madrid-stage-icon size-4 shrink-0" />, title: 'Training ground' },
+  waitingOnAuthor: { icon: <CoffeeIcon className="madrid-stage-icon size-4 shrink-0" />, title: 'Half-time' },
+}
+
 function ColumnTitle({ group: g }: { group: PrGroup }) {
+  const stage = useMadrid() ? MATCH_STAGE[g.id] : null
+  if (stage)
+    return (
+      <h2 className="madrid-stage mx-1 mb-1.5 flex items-center gap-2.5 px-2.5 pb-2">
+        {stage.icon}
+        <span className="flex min-w-0 flex-1 flex-col leading-tight">
+          <span className="truncate text-[0.9375rem] font-semibold tracking-(--tracking-heading)">{stage.title}</span>
+          <span className="truncate text-2xs font-medium text-dimmer">{g.title}</span>
+        </span>
+        <span className="madrid-count tabular-nums">{g.prs.length}</span>
+      </h2>
+    )
   return (
-    <h2 className="mb-2 flex items-baseline gap-2 text-sm font-semibold">
+    <h2 className="mb-1.5 flex items-center gap-2 px-3.5 text-[0.9375rem] font-semibold tracking-(--tracking-heading)">
       {g.title}
-      <span className="text-xs font-normal text-dimmer tabular-nums">{g.prs.length}</span>
+      <span className="rounded-full bg-fill px-1.75 text-2xs font-medium text-muted-foreground tabular-nums">{g.prs.length}</span>
     </h2>
   )
 }
@@ -269,77 +285,16 @@ function Column({
   onOpen: (p: PullRequest) => void
   sessionsOf: (p: PullRequest) => Session[] | undefined
 }) {
+  const madrid = useMadrid()
   return (
-    <section aria-label={g.title} className="flex w-80 shrink-0 flex-col">
+    <section aria-label={g.title} className="flex max-h-full min-w-72 flex-1 basis-80 flex-col pt-1">
       <ColumnTitle group={g} />
-      <div className="min-h-0 flex-1 space-y-2 overflow-y-auto pr-1">
+      <div className="-mx-3 min-h-0 flex-1 space-y-3 overflow-y-auto px-3 pt-1.5 pb-5">
         {g.prs.map((p) => (
           <PrCard key={p.url} pr={p} now={now} onOpen={onOpen} sessions={sessionsOf(p)} />
         ))}
-        {!g.prs.length ? <p className="rounded-lg border border-dashed p-3 text-center text-xs text-dimmer">Nothing here</p> : null}
+        {!g.prs.length ? <p className="rounded-[0.875rem] border border-dashed border-hairline p-3.5 text-center text-xs text-dimmer">{madrid ? 'No match. Rest day.' : 'Nothing here'}</p> : null}
       </div>
     </section>
-  )
-}
-
-function PrCard({ pr: p, now, onOpen, sessions }: { pr: PullRequest; now: number; onOpen: (p: PullRequest) => void; sessions?: Session[] }) {
-  const review = reviewLabel(p)
-  const mine = p.column === 'draftMine' || p.column === 'reviewMine' || p.column === 'readyToMergeMine'
-  const worktree = p.local?.worktree
-  const rot = p.rotting ? ROT_TONE[p.rotting] : null
-  const since = waitingSince(p)
-  return (
-    <div className={cn('rounded-lg border bg-card text-sm hover:border-primary/40', rot && ['border-l-[3px]', rot.border])}>
-      <button
-        type="button"
-        onClick={() => onOpen(p)}
-        className="block w-full rounded-lg p-3 text-left outline-none hover:bg-muted/40 focus-visible:ring-2 focus-visible:ring-ring/50"
-      >
-        <div className="mb-1 flex items-center gap-1.5 text-xs text-muted-foreground">
-          {p.draft ? <GitPullRequestDraftIcon className="size-3.5 shrink-0" /> : <GitPullRequestIcon className="size-3.5 shrink-0" />}
-          <span className="min-w-0 truncate font-mono">
-            {p.repo}#{p.number}
-          </span>
-          <ChecksIcon checks={p.checks} />
-          <span
-            className="ml-auto shrink-0 rounded border px-1 text-[0.625rem] leading-4 font-semibold"
-            title={`+${p.additions} −${p.deletions} in ${p.changedFiles} files`}
-          >
-            {p.size}
-          </span>
-          <span
-            className={cn('shrink-0 tabular-nums', rot?.text)}
-            title={`${since === p.createdAt ? 'Opened' : 'Mentioned'} ${new Date(since).toLocaleString()}${p.rotting && p.rotting !== 'fresh' ? ` — ${p.rotting}` : ''}`}
-          >
-            {relTime(since, now)}
-          </span>
-        </div>
-        <div className="line-clamp-2 font-medium text-foreground">{p.title}</div>
-        <div className="mt-1.5 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-muted-foreground">
-          {!mine ? <span>@{p.author}</span> : null}
-          {review ? <span className={cn(p.myReview?.newCommits && 'text-status-waiting')}>{review}</span> : null}
-          {p.comments ? (
-            <span className="inline-flex items-center gap-0.5" title={`${p.comments} comments`}>
-              <MessageSquareIcon className="size-3" />
-              {p.comments}
-            </span>
-          ) : null}
-          {worktree ? (
-            <span className="inline-flex min-w-0 items-center gap-0.5 text-status-busy" title={`Checked out in ${worktree}`}>
-              <FolderGit2Icon className="size-3 shrink-0" />
-              worktree
-            </span>
-          ) : null}
-        </div>
-      </button>
-      {p.column === 'unseenMentions' ? <PrMention pr={p} className="border-t px-3 py-2" /> : null}
-      {sessions?.length ? (
-        <div className="flex flex-col gap-0.5 border-t px-2 py-1.5">
-          {sessions.map((s) => (
-            <PrSessionLink key={`${s.host}/${s.session_id}`} session={s} className="text-muted-foreground" />
-          ))}
-        </div>
-      ) : null}
-    </div>
   )
 }

@@ -1,11 +1,12 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { Loader2Icon, MoonIcon, PlayIcon } from 'lucide-react'
+import { useLocation, useRoute } from 'wouter'
 
 import type { DormantView } from '@/api/types'
 import { HostBadge } from '@/components/HostBadge'
 import { Button } from '@/components/ui/button'
 import { useDormant } from '@/hooks/useDormant'
-import { dormantMeta, dormantTitles, searchDormant } from '@/lib/dormant'
+import { closedHref, dormantMeta, dormantTitles, previewSessionId, searchDormant } from '@/lib/dormant'
 import { cn } from '@/lib/utils'
 
 /**
@@ -62,6 +63,67 @@ export function ArmButton({
 }
 
 /**
+ * A dormant / recently closed entry: the row itself opens its read-only chat (`#/closed/<host>/<id>`,
+ * `id` = its first Claude session; null = none, the row is plain). `actions` (Resume, Forget) sit in
+ * the row but never open it. `selected`: that chat is open now.
+ */
+export function PreviewLink({
+  host,
+  id,
+  selected = false,
+  className,
+  actions,
+  children,
+}: {
+  host: string
+  id: string | null
+  selected?: boolean
+  className?: string
+  actions: ReactNode
+  children: ReactNode
+}) {
+  const [, navigate] = useLocation()
+  const href = id ? closedHref(host, id) : null
+  const open = () => {
+    if (href) navigate(href)
+  }
+  return (
+    <div
+      onClick={href ? open : undefined}
+      data-selected={selected || undefined}
+      className={cn(
+        className,
+        href && 'cursor-pointer transition-colors hover:border-border hover:bg-muted/40',
+        selected && 'border-solid border-ring/60 bg-muted/60',
+      )}
+    >
+      {href ? (
+        <a
+          href={`#${href}`}
+          title="Show its conversation (read only)"
+          aria-current={selected ? 'page' : undefined}
+          onClick={(e) => {
+            e.stopPropagation()
+            // A new tab / window keeps the browser's own handling.
+            if (e.metaKey || e.ctrlKey || e.shiftKey || e.altKey || e.button !== 0) return
+            e.preventDefault()
+            open()
+          }}
+          className="block min-w-0 rounded-md outline-none focus-visible:ring-3 focus-visible:ring-ring/50"
+        >
+          {children}
+        </a>
+      ) : (
+        children
+      )}
+      <div className="mt-1.5 flex items-center justify-end gap-1" onClick={(e) => e.stopPropagation()}>
+        {actions}
+      </div>
+    </div>
+  )
+}
+
+/**
  * Sessions a reboot left dormant, per host: what they were (tmux name, Claude titles, panes, how
  * long ago) with Resume (brings the tmux session back and resumes its Claude sessions), Forget
  * (two clicks) and Resume all (two clicks). Nothing when no host has dormant sessions.
@@ -69,6 +131,8 @@ export function ArmButton({
  */
 export function DormantSection({ now, host = null, query = '', desktop = false, className }: { now: number; host?: string | null; query?: string; desktop?: boolean; className?: string }) {
   const { hosts, busy, resume, resumeAll, forget } = useDormant()
+  // The entry whose read-only chat is open (`#/closed/<host>/<id>`) is highlighted.
+  const [previewing, pp] = useRoute('/closed/:host/:id')
   const shown = (host ? hosts.filter((h) => h.host === host) : hosts).map((h) => searchDormant(h, query)).filter((h) => h.views.length > 0)
   if (!shown.length) return null
   const size = desktop ? 'sm' : 'lg'
@@ -100,6 +164,8 @@ export function DormantSection({ now, host = null, query = '', desktop = false, 
           {h.views.map((v) => (
             <DormantRow
               key={`${v.kind}/${v.target}`}
+              host={h.host}
+              selected={previewing && pp.host === h.host && (v.sessions ?? []).some((x) => x?.sessionId === pp.id)}
               view={v}
               now={now}
               size={size}
@@ -115,6 +181,8 @@ export function DormantSection({ now, host = null, query = '', desktop = false, 
 }
 
 function DormantRow({
+  host,
+  selected,
   view: v,
   now,
   size,
@@ -122,6 +190,8 @@ function DormantRow({
   onResume,
   onForget,
 }: {
+  host: string
+  selected: boolean
   view: DormantView
   now: number
   size: 'sm' | 'lg'
@@ -131,23 +201,30 @@ function DormantRow({
 }) {
   const titles = dormantTitles(v)
   return (
-    <div className="rounded-lg border border-dashed border-border/70 bg-card/50 px-3 py-2">
+    <PreviewLink
+      host={host}
+      id={previewSessionId(v)}
+      selected={selected}
+      className="rounded-2xl bg-fill-hover px-3.5 py-2.5"
+      actions={
+        <>
+          <ArmButton confirm="Forget?" onConfirm={onForget} busy={false} size={size} className="text-dimmer" title="Drop it without resuming">
+            Forget
+          </ArmButton>
+          <Button type="button" variant="outline" size={size} disabled={busy} onClick={onResume} title="Recreate the tmux session and resume its Claude sessions">
+            {busy ? <Loader2Icon className="animate-spin" /> : <PlayIcon />}
+            Resume
+          </Button>
+        </>
+      }
+    >
       <div className="min-w-0 opacity-75">
         <p className="truncate text-sm font-semibold" title={v.name}>
           {v.name}
         </p>
         {titles && titles !== v.name ? <p className="line-clamp-2 text-xs break-words text-muted-foreground">{titles}</p> : null}
-        <p className="mt-0.5 truncate text-[0.6875rem] text-dimmer tabular-nums">{dormantMeta(v, now)}</p>
+        <p className="mt-0.5 truncate text-2xs text-dimmer tabular-nums">{dormantMeta(v, now)}</p>
       </div>
-      <div className="mt-1.5 flex items-center justify-end gap-1">
-        <ArmButton confirm="Forget?" onConfirm={onForget} busy={false} size={size} className="text-dimmer" title="Drop it without resuming">
-          Forget
-        </ArmButton>
-        <Button type="button" variant="outline" size={size} disabled={busy} onClick={onResume} title="Recreate the tmux session and resume its Claude sessions">
-          {busy ? <Loader2Icon className="animate-spin" /> : <PlayIcon />}
-          Resume
-        </Button>
-      </div>
-    </div>
+    </PreviewLink>
   )
 }

@@ -23,6 +23,22 @@ tauri-plugin-single-instance = "2"
 dirs = "6"
 url = "2"
 
+# Native notifications (Notification Center) for `fleet://notify` links.
+[target.'cfg(target_os = "macos")'.dependencies]
+objc2 = "0.6"
+block2 = "0.6"
+objc2-foundation = { version = "0.3", features = ["NSBundle", "NSString", "NSError"] }
+objc2-user-notifications = { version = "0.3", features = [
+  "UNUserNotificationCenter",
+  "UNNotificationContent",
+  "UNNotificationRequest",
+  "UNNotificationResponse",
+  "UNNotification",
+  "UNNotificationSound",
+  "UNNotificationTrigger",
+  "block2",
+] }
+
 [dev-dependencies]
 tempfile.workspace = true
 

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { ChevronDownIcon, CircleAlertIcon, Loader2Icon, PlusIcon, RefreshCwIcon, Trash2Icon } from 'lucide-react'
+import { ChevronDownIcon, CircleAlertIcon, Loader2Icon, PlusIcon, RefreshCwIcon } from 'lucide-react'
 import { toast } from 'sonner'
 
 import { ApiError, api } from '@/api/client'
@@ -32,11 +32,12 @@ import {
   type OutcomeTone,
 } from '@/lib/repos'
 import { cn } from '@/lib/utils'
+import { BinIcon } from '@/components/Madrid'
 
 type Load = { state: 'ok'; data: ReposResponse } | { state: 'error'; error: string }
 
 const segItem =
-  'h-8 flex-1 rounded-md px-2 text-[0.8125rem] text-muted-foreground data-[state=on]:bg-background data-[state=on]:text-foreground data-[state=on]:shadow-sm dark:data-[state=on]:bg-accent'
+  'h-8 flex-1 rounded-full px-2 text-body-sm text-muted-foreground hover:bg-transparent hover:text-foreground data-[state=on]:bg-seg data-[state=on]:text-foreground data-[state=on]:shadow-[0_1px_2px_0_var(--shadow-tint-2),0_0_0_0.5px_var(--edge-strong)]'
 
 const TONE: Record<OutcomeTone, string> = {
   ok: 'text-dimmer',
@@ -175,9 +176,9 @@ export function ReposEditor() {
           type="single"
           value={current ?? ''}
           onValueChange={(v) => v && setHost(v)}
-          spacing={0}
+          spacing={0.5}
           aria-label="Host"
-          className="w-full rounded-lg bg-muted p-1"
+          className="w-full rounded-full bg-fill p-1"
         >
           {hosts.map((h) => (
             <ToggleGroupItem key={h} value={h} className={segItem}>
@@ -233,9 +234,9 @@ export function ReposEditor() {
               type="single"
               value={draft.every}
               onValueChange={(v) => v && edit((s) => ({ ...s, every: v }))}
-              spacing={0}
+              spacing={0.5}
               aria-label="Default interval"
-              className="w-full rounded-lg bg-muted p-1"
+              className="w-full rounded-full bg-fill p-1"
             >
               {(REPO_INTERVALS as readonly string[]).concat(REPO_INTERVALS.includes(draft.every as never) ? [] : [draft.every]).map((v) => (
                 <ToggleGroupItem key={v} value={v} className={segItem}>
@@ -268,7 +269,7 @@ export function ReposEditor() {
                       autoCorrect="off"
                       aria-invalid={problem ? true : undefined}
                       onChange={(e) => edit((s) => ({ ...s, roots: s.roots.map((x, j) => (j === i ? e.target.value : x)) }))}
-                      className="h-9 font-mono text-[0.8125rem] md:h-8"
+                      className="h-9 font-mono text-body-sm md:h-8"
                     />
                     {problem ? <p className="pt-1 text-xs text-destructive">{problem}</p> : null}
                   </div>
@@ -281,7 +282,7 @@ export function ReposEditor() {
                     onClick={() => edit((s) => ({ ...s, roots: s.roots.filter((_, j) => j !== i) }))}
                     className="size-9 text-muted-foreground hover:text-destructive md:size-8"
                   >
-                    <Trash2Icon />
+                    <BinIcon />
                   </Button>
                 </div>
               )
@@ -362,7 +363,7 @@ function RepoList({
   }
   if (!data.repos.length) return <p className="text-sm text-dimmer">No git repos under these directories (save to rescan).</p>
   return (
-    <ul aria-label={`Repos on ${data.host}`} className="divide-y divide-border/60 rounded-xl border">
+    <ul aria-label={`Repos on ${data.host}`} className="divide-y divide-hairline rounded-2xl bg-card shadow-float">
       {data.repos.map((r) => {
         const v = rowInterval(draft, r)
         const off = v === 'off'

@@ -1,5 +1,6 @@
 // After a spawn: poll /api/fleet until Claude registers the new session, then hand it
 // over (the caller navigates to it). One watch at a time; a new spawn replaces the old one.
+// A fleet body fetched elsewhere (the app's own poll) counts too: whichever shows the session first finds it.
 import { api } from '@/api/client'
 import type { FleetResponse, Session, SpawnResponse } from '@/api/types'
 import { findSpawned } from '@/lib/sessions'
@@ -11,30 +12,42 @@ export interface SpawnWatchHandlers {
   onTimeout: () => void
 }
 
-let cancelCurrent: (() => void) | null = null
+let current: { stop: () => void; check: (fleet: FleetResponse) => void } | null = null
+
+/**
+ * Every fleet body the app records (useFleet().applyFleet): the watched session found in the same tick
+ * the list first shows it, so whatever the finder sets for it (a signed legend) is there from its first render.
+ */
+export function noticeFleet(fleet: FleetResponse) {
+  current?.check(fleet)
+}
 
 export function watchForSpawned(
   spawned: Pick<SpawnResponse, 'host' | 'name' | 'tmuxSession'>,
   handlers: SpawnWatchHandlers,
   { intervalMs = 1500, timeoutMs = 45_000 } = {},
 ): () => void {
-  cancelCurrent?.()
+  current?.stop()
   const deadline = Date.now() + timeoutMs
   let timer: ReturnType<typeof setTimeout> | undefined
   let stopped = false
   const ctl = new AbortController()
+
+  const check = (fleet: FleetResponse) => {
+    if (stopped) return
+    const found = findSpawned(fleet, spawned.host, spawned)
+    if (!found) return
+    stop()
+    handlers.onFound(found)
+  }
 
   const tick = async () => {
     try {
       const fleet = await api.fleet({ signal: ctl.signal })
       if (stopped) return
       handlers.onFleet(fleet)
-      const found = findSpawned(fleet, spawned.host, spawned)
-      if (found) {
-        stop()
-        handlers.onFound(found)
-        return
-      }
+      check(fleet)
+      if (stopped) return
     } catch {
       if (stopped) return // keep trying otherwise
     }
@@ -50,10 +63,11 @@ export function watchForSpawned(
     stopped = true
     clearTimeout(timer)
     ctl.abort()
-    if (cancelCurrent === stop) cancelCurrent = null
+    if (current === watch) current = null
   }
 
-  cancelCurrent = stop
+  const watch = { stop, check }
+  current = watch
   timer = setTimeout(tick, intervalMs)
   return stop
 }

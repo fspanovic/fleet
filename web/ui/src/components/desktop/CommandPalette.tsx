@@ -38,7 +38,7 @@ export function CommandPalette({ open, onOpenChange, sessions, selectedKey, onOp
   }
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="top-[18%] translate-y-0 overflow-hidden rounded-xl! p-0 sm:max-w-xl" showCloseButton={false}>
+      <DialogContent className="top-[18%] translate-y-0 overflow-hidden rounded-2xl! p-0 sm:max-w-xl" showCloseButton={false}>
         <DialogTitle className="sr-only">Command palette</DialogTitle>
         <DialogDescription className="sr-only">Jump to a session or run an action</DialogDescription>
         <Command loop filter={paletteFilter} className="**:data-[slot=command-input-wrapper]:p-2">
@@ -60,10 +60,10 @@ export function CommandPalette({ open, onOpenChange, sessions, selectedKey, onOp
                       <StatusDot status={s.status} className="size-2" />
                       <span className="min-w-0 flex-1 truncate">
                         <span className="font-medium">{sessionTitle(s)}</span>
-                        {s.cwd ? <span className="ml-2 font-mono text-[0.6875rem] text-dimmer">{shortCwd(s.cwd, 40)}</span> : null}
+                        {s.cwd ? <span className="ml-2 font-mono text-2xs text-dimmer">{shortCwd(s.cwd, 40)}</span> : null}
                       </span>
-                      <span className="shrink-0 text-[0.6875rem] text-muted-foreground">{statusLabel(s)}</span>
-                      <HostBadge host={s.host} className="h-4 px-1 text-[0.625rem]" />
+                      <span className="shrink-0 text-2xs text-muted-foreground">{statusLabel(s)}</span>
+                      <HostBadge host={s.host} className="h-4 px-1 text-3xs" />
                       {key === selectedKey ? <CommandShortcut>open</CommandShortcut> : null}
                     </CommandItem>
                   )

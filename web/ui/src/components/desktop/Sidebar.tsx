@@ -1,13 +1,16 @@
-import { useEffect, useRef, type KeyboardEvent, type Ref } from 'react'
+import { useEffect, useRef, useState, type DragEvent, type KeyboardEvent, type Ref } from 'react'
 import { NotebookTextIcon, PanelLeftCloseIcon, PanelLeftOpenIcon, PlusIcon, SearchIcon, XIcon } from 'lucide-react'
 
+import { DormantCard } from '@/components/board/DormantCard'
+import { GroupSection } from '@/components/board/GroupedList'
 import { ClosedSection } from '@/components/ClosedSection'
 import { DormantSection } from '@/components/DormantSection'
 import { HostDot } from '@/components/HostBadge'
 import { StatusFilterLabel } from '@/components/JobChip'
 import { SessionListSkeleton } from '@/components/SessionListSkeleton'
-import { SessionRow } from '@/components/SessionRow'
+import { SessionRowList } from '@/components/SessionRowList'
 import { StatusDot } from '@/components/StatusDot'
+import { UsageSummary } from '@/components/UsageSummary'
 import { Alert, AlertDescription } from '@/components/ui/alert'
 import { ModuleButtons } from '@/components/ModuleNav'
 import { Button } from '@/components/ui/button'
@@ -15,17 +18,17 @@ import { Input } from '@/components/ui/input'
 import { Kbd } from '@/components/ui/kbd'
 import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group'
 import { ViewToggle } from '@/components/ViewToggle'
+import type { MoveCard } from '@/hooks/useGroups'
 import { useNotesHosts } from '@/hooks/useNotes'
 import { ALL_HOSTS, type SessionListState } from '@/hooks/useSessionList'
-import type { ViewMode } from '@/lib/groups'
+import { memberId, sectionDrop, type BoardColumn, type GroupEdit, type ViewMode } from '@/lib/groups'
+import { isRowDrag } from '@/lib/listOrder'
 import { allSessions, visibleStatusFilters, type StatusFilterId } from '@/lib/sessions'
 import { ariaShortcut, sessionKey, shortcutHint, withHint } from '@/lib/shortcuts'
+import { FILTER_SEGMENT, SEGMENTED, TOOLBAR } from '@/lib/styles'
 import { cn } from '@/lib/utils'
 
-const chip = cn(
-  'h-7 shrink-0 gap-1 rounded-full border border-border bg-card px-2.5 text-xs text-muted-foreground',
-  'data-[state=on]:border-primary/50 data-[state=on]:bg-accent data-[state=on]:text-accent-foreground',
-)
+const chip = cn('h-7 flex-1 px-2.5 text-xs', FILTER_SEGMENT)
 
 export interface SidebarProps {
   list: SessionListState
@@ -40,10 +43,26 @@ export interface SidebarProps {
   /** List | Board toggle (omitted → no toggle). */
   viewMode?: ViewMode
   onViewMode?: (v: ViewMode) => void
+  /** The list in sections, one per group (server groups on); omitted / null → the flat list. */
+  sections?: SidebarSections | null
 }
 
-/** Desktop left column: header + summary, search, status/host filters, the session list. */
-export function Sidebar({ list, now, cursorKey, selectedKey, searchRef, onSearchNav, onNew, onCollapse, viewMode, onViewMode }: SidebarProps) {
+export interface SidebarSections {
+  /** The board's columns, top to bottom (lib/groups.ts listSections). */
+  columns: BoardColumn[]
+  collapsed: readonly string[]
+  /** Searching: every section open, its header off. */
+  locked: boolean
+  onToggle: (id: string) => void
+  /** A row dragged into place in its section or another one: the board's card order (useBoardColumns' moveCard). */
+  onMove: MoveCard
+  /** Sessions can move between groups (the server's groups); `onEdit` moves one, as on the Board. */
+  editable: boolean
+  onEdit: (e: GroupEdit) => void
+}
+
+/** Desktop left column: header + summary, search, status/host filters, the session list (one section per group when the server groups). */
+export function Sidebar({ list, now, cursorKey, selectedKey, searchRef, onSearchNav, onNew, onCollapse, viewMode, onViewMode, sections }: SidebarProps) {
   const { fleet, error, query, setQuery, status, setStatus, setHostFilter, hosts, hostNames, host, view, hostCounts, summary, unreachable, note } = list
   const listRef = useRef<HTMLDivElement>(null)
 
@@ -72,12 +91,12 @@ export function Sidebar({ list, now, cursorKey, selectedKey, searchRef, onSearch
 
   return (
     <div className="flex h-full min-w-0 flex-col">
-      <div data-tauri-drag-region className="shrink-0 space-y-2 border-b px-3 pt-3 pb-2.5">
+      <div data-tauri-drag-region className="shrink-0 space-y-3 px-3 pt-3 pb-2.5">
         {/* The desktop app's traffic lights sit over this row (see index.css → Desktop app). */}
         <div data-tauri-drag-region="deep" className="titlebar-lead flex min-h-8 items-center gap-2 [--titlebar-offset:0.75rem]">
-          <h1 className="text-lg font-bold tracking-tight">Fleet</h1>
+          <h1 className="brand-title text-xl font-bold tracking-(--tracking-display)">Fleet</h1>
           {fleet ? (
-            <div className="flex items-center gap-2 text-xs text-muted-foreground tabular-nums" aria-label="Status summary">
+            <div className="flex items-center gap-2.5 text-xs font-medium text-muted-foreground tabular-nums" aria-label="Status summary">
               {summary.waiting > 0 ? (
                 <span className="flex items-center gap-1 font-semibold text-status-waiting" title="Needs you">
                   <StatusDot status="waiting" className="size-2" />
@@ -95,15 +114,15 @@ export function Sidebar({ list, now, cursorKey, selectedKey, searchRef, onSearch
             </div>
           ) : null}
           <span
-            className={cn('ml-auto truncate text-right text-[0.6875rem] tabular-nums', note.error ? 'text-destructive' : 'text-dimmer')}
+            className={cn('ml-auto truncate text-right text-3xs tabular-nums', note.error ? 'text-destructive' : 'text-dimmer')}
             aria-live="polite"
           >
             {note.text}
           </span>
-          <Button size="icon" aria-label="New session" title={withHint('New session', 'new')} onClick={onNew} className="shrink-0 rounded-full">
+          <Button size="icon" aria-label="New session" title={withHint('New session', 'new')} onClick={onNew} className="size-8 shrink-0 rounded-full shadow-[0_4px_12px_-4px_color-mix(in_oklab,var(--primary)_70%,transparent)]">
             <PlusIcon />
           </Button>
-          <Button variant="ghost" size="icon" aria-label="Collapse sidebar" title={withHint('Collapse sidebar', 'sidebar')} onClick={onCollapse} className="shrink-0">
+          <Button variant="ghost" size="icon" aria-label="Collapse sidebar" title={withHint('Collapse sidebar', 'sidebar')} onClick={onCollapse} className="shrink-0 rounded-full text-muted-foreground">
             <PanelLeftCloseIcon />
           </Button>
         </div>
@@ -124,14 +143,14 @@ export function Sidebar({ list, now, cursorKey, selectedKey, searchRef, onSearch
             value={query}
             onChange={(e) => setQuery(e.target.value)}
             onKeyDown={onSearchKeyDown}
-            className="h-9 rounded-lg bg-card pr-9 pl-8 [&::-webkit-search-cancel-button]:hidden"
+            className="h-9 rounded-full border-transparent bg-fill pr-9 pl-8 shadow-none focus-visible:border-transparent focus-visible:bg-card [&::-webkit-search-cancel-button]:hidden"
           />
           {query ? (
             <button
               type="button"
               aria-label="Clear search"
               onClick={() => setQuery('')}
-              className="absolute inset-y-0 right-0 grid w-9 place-items-center rounded-r-lg text-dimmer outline-none hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring/50"
+              className="absolute inset-y-0 right-0 grid w-9 place-items-center rounded-r-full text-dimmer outline-none hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring/50"
             >
               <XIcon className="size-4" />
             </button>
@@ -139,7 +158,7 @@ export function Sidebar({ list, now, cursorKey, selectedKey, searchRef, onSearch
             <Kbd className="absolute top-1/2 right-2 -translate-y-1/2">{shortcutHint('search')}</Kbd>
           )}
         </div>
-          {viewMode && onViewMode ? <ViewToggle value={viewMode} onChange={onViewMode} labels={false} className="p-px" /> : null}
+          {viewMode && onViewMode ? <ViewToggle value={viewMode} onChange={onViewMode} labels={false} /> : null}
         </div>
 
         <ToggleGroup
@@ -147,12 +166,13 @@ export function Sidebar({ list, now, cursorKey, selectedKey, searchRef, onSearch
           value={status}
           onValueChange={(v) => v && setStatus(v as StatusFilterId)}
           aria-label="Filter by status"
-          className="no-scrollbar w-full flex-wrap"
+          spacing={0.5}
+          className={cn(SEGMENTED, 'no-scrollbar w-full flex-nowrap overflow-x-auto')}
         >
           {visibleStatusFilters(fleet ? view.counts : null, status).map((f) => (
             <ToggleGroupItem key={f.id} value={f.id} className={chip} title={f.id === 'scheduled' ? 'Sessions started by scheduled jobs' : undefined}>
               <StatusFilterLabel filter={f} />
-              <span className="text-[0.6875rem] text-dimmer tabular-nums group-data-[state=on]/toggle:text-accent-foreground/70">
+              <span className="text-2xs text-dimmer tabular-nums group-data-[state=on]/toggle:text-muted-foreground">
                 {fleet ? view.counts[f.id] : ''}
               </span>
             </ToggleGroupItem>
@@ -165,7 +185,8 @@ export function Sidebar({ list, now, cursorKey, selectedKey, searchRef, onSearch
             value={host ?? ALL_HOSTS}
             onValueChange={(v) => v && setHostFilter(v)}
             aria-label="Filter by host"
-            className="no-scrollbar w-full flex-nowrap overflow-x-auto"
+            spacing={0.5}
+            className={cn(SEGMENTED, 'no-scrollbar w-full flex-nowrap overflow-x-auto')}
           >
             <ToggleGroupItem value={ALL_HOSTS} className={chip}>
               All
@@ -174,14 +195,14 @@ export function Sidebar({ list, now, cursorKey, selectedKey, searchRef, onSearch
               <ToggleGroupItem key={h.name} value={h.name} className={chip}>
                 <HostDot host={h.name} />
                 <span className={cn(h.ok === false && 'text-destructive')}>{h.name}</span>
-                <span className="text-[0.6875rem] text-dimmer tabular-nums">{h.ok === false ? '!' : (hostCounts.get(h.name) ?? 0)}</span>
+                <span className="text-2xs text-dimmer tabular-nums">{h.ok === false ? '!' : (hostCounts.get(h.name) ?? 0)}</span>
               </ToggleGroupItem>
             ))}
           </ToggleGroup>
         ) : null}
       </div>
 
-      <div ref={listRef} data-session-list className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-2 py-2">
+      <div ref={listRef} data-session-list className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-2.5 pt-2 pb-4">
         {error ? (
           <Alert variant="destructive" className="mb-2">
             <AlertDescription>
@@ -198,13 +219,18 @@ export function Sidebar({ list, now, cursorKey, selectedKey, searchRef, onSearch
         ))}
         {!fleet ? (
           <SessionListSkeleton />
-        ) : view.sessions.length > 0 ? (
-          <nav aria-label="Sessions" className="flex flex-col gap-1.5">
-            {view.sessions.map((s) => {
-              const key = sessionKey(s)
-              return <SessionRow key={key} session={s} now={now} selected={key === selectedKey} cursor={key === cursorKey && key !== selectedKey} />
-            })}
-          </nav>
+        ) : sections && sections.columns.length > 0 ? (
+          <SectionedList sections={sections} now={now} selectedKey={selectedKey} cursorKey={cursorKey} />
+        ) : !sections && view.sessions.length > 0 ? (
+          <SessionRowList
+            label="Sessions"
+            className="flex flex-col gap-2"
+            sessions={view.sessions}
+            now={now}
+            selectedKey={selectedKey}
+            cursorKey={cursorKey}
+            onMove={list.moveRow}
+          />
         ) : unreachable.length === 0 ? (
           <div className="px-4 py-10 text-center text-sm text-dimmer">
             {allSessions(fleet).length > 0 ? 'Nothing matches.' : 'No Claude sessions running.'}
@@ -214,15 +240,110 @@ export function Sidebar({ list, now, cursorKey, selectedKey, searchRef, onSearch
         {fleet ? <ClosedSection now={now} host={host} query={query} desktop className="mt-3" /> : null}
       </div>
 
-      <div className="shrink-0 border-t px-2 py-1.5 text-xs text-dimmer">
+      <div className="shrink-0 space-y-2 px-2.5 pt-1 pb-2.5 text-xs text-dimmer">
+        <UsageSummary layout="rows" className="rounded-xl bg-fill-hover px-2.5 py-2 hover:bg-fill" />
         {/* Work modules on the left, helper screens (usage, settings) on the right. Jump and the shortcuts live in ⌘K / ⌘? and Settings. */}
-        <nav aria-label="Modules" className="flex items-center gap-1">
-          <ModuleButtons size="icon-sm" group="work" />
+        <nav aria-label="Modules" className="flex items-center gap-1.5">
+          <div className={TOOLBAR}>
+            <ModuleButtons size="icon-sm" group="work" className="rounded-full" />
+          </div>
           <span className="ml-auto" />
-          <ModuleButtons size="icon-sm" group="utility" />
+          <div className={TOOLBAR}>
+            <ModuleButtons size="icon-sm" group="utility" className="rounded-full" />
+          </div>
         </nav>
       </div>
     </div>
+  )
+}
+
+/**
+ * The list in sections, one per board column (a group's ⋯ makes it the default group). A row drags
+ * into place in its section or, by the Board's rules (sectionDrop: out of a group or Ungrouped), into
+ * another group's section: onto its rows (a line shows where it
+ * lands), its header (collapsed or not) or its "No sessions" (it goes last). The section lights up,
+ * the session moves there (`onEdit`) and takes that spot in the board's card order.
+ */
+function SectionedList({ sections, now, selectedKey, cursorKey }: { sections: SidebarSections; now: number; selectedKey: string | null; cursorKey: string | null }) {
+  const { columns, editable } = sections
+  const [dragKey, setDragKey] = useState<string | null>(null)
+  /** The section a row from another one would move to. */
+  const [over, setOver] = useState<string | null>(null)
+  const onDrag = (key: string | null) => {
+    setDragKey(key)
+    if (key == null) setOver(null)
+  }
+
+  /** Row `key` lands in section `c` just before row `before` (null: at the end). */
+  const land = (c: BoardColumn, key: string, before: string | null) => {
+    const d = sectionDrop(columns, key, c.id, editable)
+    if (!d) return
+    const moved = d.from.id !== c.id
+    if (moved) sections.onEdit({ op: 'move', host: d.session.host, session: memberId(d.session), to: c.id })
+    sections.onMove(c.id, c.sessions.map(sessionKey), key, before, moved ? d.from.id : undefined)
+  }
+  /** Is the drag a row of another section that may move into `c`? */
+  const incoming = (e: DragEvent, c: BoardColumn) => {
+    if (dragKey == null || !isRowDrag(e.dataTransfer)) return false
+    const d = sectionDrop(columns, dragKey, c.id, editable)
+    return !!d && d.from.id !== c.id
+  }
+  const drop = (c: BoardColumn) => ({
+    over: over === c.id,
+    onDragOver(e: DragEvent) {
+      if (!incoming(e, c)) {
+        if (over === c.id) setOver(null)
+        return
+      }
+      // Over the section's rows the list has placed it (its drop line); anywhere else it goes last.
+      if (!e.isDefaultPrevented()) {
+        e.preventDefault()
+        e.dataTransfer.dropEffect = 'move'
+      }
+      if (over !== c.id) setOver(c.id)
+    },
+    onDragLeave(e: DragEvent) {
+      if (!e.currentTarget.contains(e.relatedTarget as Node | null)) setOver((o) => (o === c.id ? null : o))
+    },
+    onDrop(e: DragEvent) {
+      if (!e.isDefaultPrevented() && dragKey != null && incoming(e, c)) {
+        e.preventDefault()
+        land(c, dragKey, null)
+      }
+      onDrag(null)
+    },
+  })
+
+  return (
+    <nav aria-label="Sessions" className="flex flex-col gap-4">
+      {columns.map((c) => (
+        <GroupSection
+          key={c.id}
+          column={c}
+          open={sections.locked || !sections.collapsed.includes(c.id)}
+          locked={sections.locked}
+          onToggle={() => sections.onToggle(c.id)}
+          desktop
+          drop={drop(c)}
+          onEdit={editable ? sections.onEdit : undefined}
+        >
+          {c.sessions.length > 0 ? (
+            <SessionRowList
+              className="flex flex-col gap-2"
+              sessions={c.sessions}
+              now={now}
+              selectedKey={selectedKey}
+              cursorKey={cursorKey}
+              onMove={(_, key, before) => land(c, key, before)}
+              shared={{ key: dragKey, onDrag, accepts: (key) => sectionDrop(columns, key, c.id, editable) != null }}
+            />
+          ) : !c.dormant?.length ? (
+            <p className="px-3 py-1 text-xs text-dimmer">No sessions</p>
+          ) : null}
+          {c.dormant?.map((m) => <DormantCard key={`${m.host}/${m.id}`} member={m} now={now} desktop />)}
+        </GroupSection>
+      ))}
+    </nav>
   )
 }
 
@@ -239,11 +360,11 @@ export function SidebarRail({
   onPalette: () => void
 }) {
   return (
-    <div data-tauri-drag-region className="titlebar-rail flex h-full w-12 shrink-0 flex-col items-center gap-1 border-r py-3">
+    <div data-tauri-drag-region className="titlebar-rail flex h-full w-12 shrink-0 flex-col items-center gap-1 py-3">
       <Button variant="ghost" size="icon" aria-label="Expand sidebar" title={withHint('Expand sidebar', 'sidebar')} onClick={onExpand}>
         <PanelLeftOpenIcon />
       </Button>
-      <Button size="icon" aria-label="New session" title={withHint('New session', 'new')} onClick={onNew} className="rounded-full">
+      <Button size="icon" aria-label="New session" title={withHint('New session', 'new')} onClick={onNew} className="rounded-full shadow-[0_4px_12px_-4px_color-mix(in_oklab,var(--primary)_70%,transparent)]">
         <PlusIcon />
       </Button>
       <Button variant="ghost" size="icon" aria-label="Jump to a session" title={withHint('Jump to a session', 'palette')} onClick={onPalette}>
@@ -260,7 +381,7 @@ export function SidebarRail({
         </span>
       ) : null}
       <div className="mt-auto flex flex-col items-center gap-1">
-        <ModuleButtons />
+        <ModuleButtons side="right" />
       </div>
     </div>
   )

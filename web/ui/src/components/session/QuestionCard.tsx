@@ -35,7 +35,7 @@ function Heading({ q }: { q: Question }) {
   return (
     <div className="flex flex-col gap-1">
       {q.header ? (
-        <span className="inline-flex w-fit items-center gap-1 rounded-full bg-status-waiting/15 px-2 py-0.5 text-[0.6875rem] font-semibold text-status-waiting">
+        <span className="inline-flex w-fit items-center gap-1 rounded-full bg-status-waiting/15 px-2 py-0.5 text-2xs font-semibold text-status-waiting">
           <CircleHelpIcon className="size-3" />
           {q.header}
         </span>

@@ -23,6 +23,7 @@ import {
   parseResourceLine,
   removedResourceKeys,
   serializeBrief,
+  summaryLine,
 } from '../lib/brief-format.mjs';
 import { createBriefExtractor, extractUrls, ingestLine, readDelta } from '../lib/brief-extract.mjs';
 import { buildPrompt, createBriefStore, createBriefs, createClaudeAsk, displayPath, gitInfo } from '../lib/briefs.mjs';
@@ -334,7 +335,8 @@ test('briefs: gates — busy / not idle long enough, too little new, min interva
   s.state.sessions[0].status = 'busy';
   await s.svc.tick();
   assert.equal(s.asks.length, 0, 'busy');
-  s.state.sessions[0] = { ...s.state.sessions[0], status: 'idle', updated_at: s.now() - 30 * 1000 };
+  // `shell` (idle with a background task running) gates like idle.
+  s.state.sessions[0] = { ...s.state.sessions[0], status: 'shell', updated_at: s.now() - 30 * 1000 };
   await s.svc.tick();
   assert.equal(s.asks.length, 0, 'idle for less than idleMs');
   s.advance(31 * 1000);
@@ -861,4 +863,47 @@ test('config: web.editor and the ssh aliases', () => {
   assert.deepEqual(c.sshHosts, { workstation: 'workstation' });
   assert.equal(normalizeConfig({ web: { editor: null } }, { env: {}, home }).editor, null);
   assert.throws(() => normalizeConfig({ web: { editor: 'vim' } }, { env: {}, home }), /web\.editor/);
+});
+
+test('format: summaryLine — what, not where: first sentence, markdown and location noise dropped, capped', () => {
+  assert.equal(summaryLine('Short. Then a **second** one with [a link](https://x.y) and `code`. Third.'), 'Short. Then a second one with a link and code.');
+  // Location parentheticals and " in ~/path", " on host X", ", branch Y" go; a first sentence under 60 chars takes the next along.
+  assert.equal(summaryLine('Fixing the login loop in /home/me/Code/project (branch fix-login). The fix is in review.', { home: '/home/me' }), 'Fixing the login loop. The fix is in review.');
+  assert.equal(summaryLine('Fixing the login redirect loop in /home/me/Code/project on branch fix-login. The fix is in review.', { home: '/home/me' }), 'Fixing the login redirect loop. The fix is in review.');
+  assert.equal(
+    summaryLine('Autopilot bug watcher runs in this Claude session (pid 4510, up 18 h 46 min) on host laptop in ~/Code/project, branch main, polling every 3 minutes.'),
+    'Autopilot bug watcher runs in this Claude session, polling every 3 minutes.',
+  );
+  assert.equal(summaryLine('Session in ~/Code/project (Laptop) fixes tasks 12 and 13 in draft PR #30.', { hosts: ['laptop'] }), 'Session fixes tasks 12 and 13 in draft PR #30.');
+  assert.equal(summaryLine('Fixing session groups in web/ui (groups.ts, BoardColumns.tsx) on branch main in ~/Code/project (laptop).', { hosts: ['laptop'] }), 'Fixing session groups in web/ui (groups.ts, BoardColumns.tsx).');
+  // A URL path is not a location; a sentence that is only location stays whole.
+  assert.equal(summaryLine('Fixing a bug in /api/v2/tasks that drops sorting for every project with custom fields enabled.'), 'Fixing a bug in /api/v2/tasks that drops sorting for every project with custom fields enabled.');
+  assert.equal(summaryLine('Session in ~/Code/project (laptop).', { hosts: ['laptop'] }), 'Session in ~/Code/project (laptop).');
+  const long = summaryLine('word '.repeat(80));
+  assert.ok(long.length <= 201 && long.endsWith('…') && !long.includes(' …'));
+  assert.equal(summaryLine(''), '');
+  assert.equal(summaryLine(null), '');
+});
+
+test('briefs: stamp puts the summary line on rows — reads only, follows writes and mtimes, forgets gone sessions', async (t) => {
+  const { svc, dir } = setup(t);
+  const other = 'bbbbbbbb-1111-2222-3333-444444444444';
+  fs.mkdirSync(dir, { recursive: true });
+  fs.writeFileSync(path.join(dir, `${SID}.md`), '## Summary\nFixing a login redirect bug in the project on branch fix-login. More detail.\n');
+  const host = { name: 'laptop', ok: true, sessions: [{ session_id: SID }, { session_id: other }, { session_id: '../x' }] };
+  assert.equal(svc.stamp(host).sessions[0].briefSummary, undefined); // not read yet: never waits
+  await svc.refreshLines([SID, other]);
+  const rows = svc.stamp(host).sessions;
+  assert.equal(rows[0].briefSummary, 'Fixing a login redirect bug in the project. More detail.');
+  assert.equal('briefSummary' in rows[1], false);
+  assert.deepEqual(fs.readdirSync(dir).sort(), [`${SID}.md`]); // no file made for a session without one
+  const f = path.join(dir, `${SID}.md`);
+  fs.writeFileSync(f, '## Summary\nRewritten by hand.\n');
+  const later = new Date(Date.now() + 10_000);
+  fs.utimesSync(f, later, later);
+  await svc.refreshLines([SID]);
+  assert.equal(svc.summaryLine(SID), 'Rewritten by hand.');
+  await svc.refreshLines([]);
+  assert.equal(svc.summaryLine(SID), '');
+  assert.equal(svc.stamp({ ok: false, error: 'down' }).sessions, undefined);
 });

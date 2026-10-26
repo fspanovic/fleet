@@ -27,7 +27,7 @@ pub struct GroupOpts {
     pub cached: bool,
     pub input: Option<String>,
     pub dry_run: bool,
-    /// `--rename` / `--move`: edit the stored groups instead of running a pass.
+    /// `--rename` / `--move` / `--create` / `--delete` / `--set-default` / `--clear-default`: edit the stored groups instead of running a pass.
     pub edit: Option<Edit>,
 }
 
@@ -42,6 +42,10 @@ pub enum Edit {
     },
     Delete {
         id: String,
+    },
+    /// Make a group the default one (`None`: no default).
+    Default {
+        id: Option<String>,
     },
     /// `session` is `host/sessionId` (or `host/pid`).
     Move {
@@ -207,6 +211,7 @@ pub fn run(o: GroupOpts) -> Result<()> {
             Edit::Rename { id, label } => grouping::rename_group(&mut state, id, label, now),
             Edit::Create { label } => grouping::create_group(&mut state, label, now).map(drop),
             Edit::Delete { id } => grouping::delete_group(&mut state, id, now),
+            Edit::Default { id } => grouping::set_default_group(&mut state, id.as_deref(), now),
             Edit::Move { session, to } => match session.split_once('/') {
                 Some((host, id)) if !host.is_empty() && !id.is_empty() => {
                     grouping::move_session(&mut state, host, id, to, now).map(drop)
@@ -233,6 +238,7 @@ pub fn run(o: GroupOpts) -> Result<()> {
             last_run: state.last_run.clone(),
             groups,
             ungrouped,
+            default_group: state.default_group().map(str::to_string),
             hosts: BTreeMap::new(),
         };
         return print(&report, o.json, &path, None);
@@ -276,6 +282,7 @@ pub fn run(o: GroupOpts) -> Result<()> {
         last_run: Some(sum),
         groups,
         ungrouped,
+        default_group: state.default_group().map(str::to_string),
         hosts,
     };
     print(&report, o.json, &path, Some(o.dry_run))
@@ -299,6 +306,11 @@ fn print(r: &Report, json: bool, path: &std::path::Path, dry: Option<bool>) -> R
             " (by repository)".dimmed().to_string()
         } else {
             String::new()
+        };
+        let src = if r.default_group.as_deref() == Some(g.id.as_str()) {
+            format!("{src}{}", " (default)".dimmed())
+        } else {
+            src
         };
         println!(
             "{} {}{src}",

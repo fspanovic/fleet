@@ -391,10 +391,44 @@ fn plain_spawn_honours_dry_run() {
         .output()
         .unwrap();
     assert!(out.status.success(), "{}", stderr(&out));
+    let text = stdout(&out);
+    // No --name: one word names both the tmux session and the Claude session.
+    let word = text
+        .strip_prefix("dry-run: would spawn a tmux session ")
+        .and_then(|rest| rest.split_once(':'))
+        .map(|(w, _)| w)
+        .unwrap_or_default();
+    assert!(fleet::core::words::WORDS.contains(&word), "{text}");
     assert!(
-        stdout(&out).contains("dry-run: would spawn a tmux session"),
-        "{}",
-        stdout(&out)
+        text.contains(&format!("&& claude -n '{word}' 'hello'")),
+        "{text}"
+    );
+
+    // An explicit --name wins.
+    let out = t
+        .cmd()
+        .args([
+            "-n",
+            "spawn",
+            "--dir",
+            &t.cwd(),
+            "--backend",
+            "tmux",
+            "--name",
+            "fleet-test-named",
+            "hello",
+        ])
+        .output()
+        .unwrap();
+    assert!(out.status.success(), "{}", stderr(&out));
+    let text = stdout(&out);
+    assert!(
+        text.starts_with("dry-run: would spawn a tmux session fleet-test-named: "),
+        "{text}"
+    );
+    assert!(
+        text.contains("claude -n 'fleet-test-named' 'hello'"),
+        "{text}"
     );
 }
 

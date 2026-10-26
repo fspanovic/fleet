@@ -1,14 +1,27 @@
 // Pure helpers — no I/O, easy to unit test.
 
-/** Status ordering: things that need you first. */
-export const STATUS_RANK = { waiting: 0, busy: 1, idle: 2, unknown: 3 };
+/**
+ * Claude Code's registry status for a session idle at the prompt (turn over, nothing asked of the
+ * user) while a background task — a Monitor, a background Bash — still runs. Passed through raw in
+ * every response; sorted, counted and gated like `idle` (isIdleStatus), but never killed, cleared or
+ * typed into by automation (job auto-close, operator auto-clear, workspace naming wait for plain `idle`).
+ */
+export const SHELL_STATUS = 'shell';
+
+/** `idle`, or `shell` (idle with a background task running): the turn is over, the session sits at the prompt. */
+export function isIdleStatus(status) {
+  return status === 'idle' || status === SHELL_STATUS;
+}
+
+/** Status ordering: things that need you first. `shell` ranks with `idle`. */
+export const STATUS_RANK = { waiting: 0, busy: 1, idle: 2, shell: 2, unknown: 3 };
 
 export function statusRank(status) {
   const r = STATUS_RANK[String(status ?? '').toLowerCase()];
   return r === undefined ? STATUS_RANK.unknown : r;
 }
 
-/** Sort sessions: waiting > busy > idle > unknown, then updated_at desc. Returns a new array. */
+/** Sort sessions: waiting > busy > idle (and shell) > unknown, then updated_at desc. Returns a new array. */
 export function sortSessions(sessions) {
   return [...(sessions ?? [])].sort((a, b) => {
     const ra = statusRank(a?.status);
@@ -87,13 +100,61 @@ export function validateTitle(title) {
   return { ok: true, title: t };
 }
 
-export const ALLOWED_KEYS = ['Enter', 'Escape', 'Up', 'Down'];
+/**
+ * Keys the `keys` route presses: everything Claude Code's interactive dialogs read (`/mcp`,
+ * `/model`, `/config`, `/resume`, `/plugin`, `/permissions`, `/hooks`…: menus, tabs, toggles,
+ * the filter field). `BTab` is Shift+Tab, `BSpace` Backspace. No Ctrl combinations: C-c / C-d
+ * can end the agent.
+ */
+export const ALLOWED_KEYS = [
+  'Enter',
+  'Escape',
+  'Up',
+  'Down',
+  'Left',
+  'Right',
+  'Tab',
+  'BTab',
+  'Space',
+  'BSpace',
+  'Home',
+  'End',
+  'PageUp',
+  'PageDown',
+];
 
 export function validateKey(key) {
   if (typeof key !== 'string' || !ALLOWED_KEYS.includes(key)) {
     return { ok: false, error: `key must be one of ${ALLOWED_KEYS.join(', ')}` };
   }
   return { ok: true, key };
+}
+
+/** Longest text one `type` call types (a dialog's filter, a menu digit — not a message). */
+export const MAX_TYPE_CHARS = 200;
+
+/**
+ * Text for the `type` route: typed literally, no Enter. No control characters (newline, tab,
+ * escape…) — those are keys, and a newline would submit.
+ */
+export function validateTypeText(text) {
+  if (typeof text !== 'string') return { ok: false, error: 'text must be a string' };
+  if (text.length === 0) return { ok: false, error: 'text must not be empty' };
+  if (text.length > MAX_TYPE_CHARS) return { ok: false, error: `text too long (max ${MAX_TYPE_CHARS} chars)` };
+  if (/[\u0000-\u001f\u007f]/.test(text)) return { ok: false, error: 'text must not contain control characters (use keys)' };
+  return { ok: true, text };
+}
+
+/**
+ * Claude Code's registry `waitingFor` while one of its own interactive dialogs (a slash command's
+ * menu such as `/mcp` or `/model`, a notice to acknowledge) is open. Typed text would go into the
+ * dialog and Enter would pick whatever it highlights.
+ */
+export const DIALOG_OPEN = 'dialog open';
+
+/** Is the session sitting in one of Claude Code's interactive dialogs? */
+export function dialogOpen(session) {
+  return session?.status === 'waiting' && String(session?.waiting_for ?? '').trim() === DIALOG_OPEN;
 }
 
 export function sleep(ms) {

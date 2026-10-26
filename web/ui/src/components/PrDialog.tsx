@@ -16,12 +16,14 @@ import { Kbd } from '@/components/ui/kbd'
 import { Label } from '@/components/ui/label'
 import { Textarea } from '@/components/ui/textarea'
 import { useFleet } from '@/hooks/useFleet'
+import { useSquadPick } from '@/hooks/useSquad'
 import { editorLabel } from '@/lib/brief'
 import { copyText } from '@/lib/clipboard'
 import { shortCwd } from '@/lib/format'
 import { CHECKS_LABEL, checksTone, prRef, promptChips } from '@/lib/prs'
 import { sessionHref } from '@/lib/sessions'
-import { isMacPlatform, isSubmitChord } from '@/lib/shortcuts'
+import { isMacPlatform, isSubmitChord, sessionKey } from '@/lib/shortcuts'
+import { settleLegend } from '@/lib/squad'
 
 /**
  * One PR's actions on `host`: start a session on it (checked out in a worktree first, the
@@ -44,6 +46,7 @@ export function PrDialog({
 }) {
   const [, navigate] = useLocation()
   const { applyFleet } = useFleet()
+  const pickLegend = useSquadPick()
   const [prompt, setPrompt] = useState('')
   const [busy, setBusy] = useState<null | 'spawn' | 'checkout'>(null)
   const [error, setError] = useState<string | null>(null)
@@ -79,10 +82,12 @@ export function PrDialog({
     if (busy) return
     setBusy('spawn')
     setError(null)
+    const legend = pickLegend()
     try {
       const res = await api.prSpawn(host, {
         pr: ref,
         prompt: prompt.trim() || undefined,
+        player: legend?.[1],
       })
       const name = res.spawn?.name || res.spawn?.tmuxSession || ref
       onClose()
@@ -99,17 +104,21 @@ export function PrDialog({
         {
           onFleet: applyFleet,
           onFound: (s) => {
+            settleLegend(legend, sessionKey(s))
             toast.success(`${name} is up`, { id, description: undefined })
             navigate(sessionHref(s))
           },
-          onTimeout: () =>
+          onTimeout: () => {
+            settleLegend(legend)
             toast.error(`${name} has not shown up yet`, {
               id,
               description: 'Check the list in a moment',
-            }),
+            })
+          },
         },
       )
     } catch (err) {
+      settleLegend(legend)
       setError((err as Error)?.message || 'Failed to start')
       setBusy(null)
     }
@@ -121,7 +130,7 @@ export function PrDialog({
         <DialogHeader>
           <DialogDescription className="flex items-center gap-1.5 font-mono text-xs">
             {pr.owner}/{pr.repo}#{pr.number}
-            {pr.draft ? <span className="rounded border px-1 font-sans text-[0.625rem]">draft</span> : null}
+            {pr.draft ? <span className="rounded border px-1 font-sans text-3xs">draft</span> : null}
           </DialogDescription>
           <DialogTitle className="text-base leading-snug">{pr.title}</DialogTitle>
         </DialogHeader>
@@ -170,7 +179,7 @@ export function PrDialog({
           </dd>
         </dl>
 
-        <PrMention pr={pr} className="rounded-lg border p-2.5" />
+        <PrMention pr={pr} className="rounded-xl bg-fill-hover p-3" />
 
         {sessions.length ? (
           <div className="space-y-1">

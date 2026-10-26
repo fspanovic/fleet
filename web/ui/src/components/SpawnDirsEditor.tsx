@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { ArrowDownIcon, ArrowUpIcon, CheckIcon, CircleAlertIcon, Loader2Icon, PlusIcon, Trash2Icon } from 'lucide-react'
+import { ArrowDownIcon, ArrowUpIcon, CheckIcon, CircleAlertIcon, Loader2Icon, PlusIcon } from 'lucide-react'
 import { toast } from 'sonner'
 
 import { ApiError, api, isAbortError } from '@/api/client'
@@ -23,6 +23,7 @@ import {
   type DraftRow,
 } from '@/lib/spawnDirs'
 import { cn } from '@/lib/utils'
+import { BinIcon } from '@/components/Madrid'
 
 type Load = { state: 'loading' } | { state: 'ok'; data: SpawnDirsResponse } | { state: 'error'; error: string }
 type Result = { host: string; ok: boolean; message: string }
@@ -248,7 +249,7 @@ export function SpawnDirsEditor() {
             className="space-y-2 md:space-y-1.5"
             style={{ ['--cols' as string]: String(cols) }}
           >
-            <div aria-hidden className="hidden gap-2 px-0.5 text-[0.6875rem] font-medium text-dimmer md:grid md:grid-cols-[9rem_repeat(var(--cols),minmax(0,1fr))_auto]">
+            <div aria-hidden className="hidden gap-2 px-0.5 text-2xs font-medium text-dimmer md:grid md:grid-cols-[9rem_repeat(var(--cols),minmax(0,1fr))_auto]">
               <span>Label</span>
               {hosts.map((h) => (
                 <span key={h} className="truncate">
@@ -266,7 +267,7 @@ export function SpawnDirsEditor() {
                   key={r.key}
                   role="group"
                   aria-label={r.label.trim() || `Entry ${i + 1}`}
-                  className="grid grid-cols-[minmax(0,1fr)_auto] items-start gap-2 rounded-xl border bg-card p-3 md:grid-cols-[9rem_repeat(var(--cols),minmax(0,1fr))_auto] md:rounded-none md:border-0 md:bg-transparent md:p-0"
+                  className="grid grid-cols-[minmax(0,1fr)_auto] items-start gap-2 rounded-[1.25rem] bg-card shadow-float p-3 md:grid-cols-[9rem_repeat(var(--cols),minmax(0,1fr))_auto] md:rounded-none md:border-0 md:bg-transparent md:p-0 md:shadow-none"
                 >
                   <div className="col-start-1 row-start-1 min-w-0">
                     <label htmlFor={labelId} className="sr-only">
@@ -296,7 +297,7 @@ export function SpawnDirsEditor() {
                       <ArrowDownIcon />
                     </Button>
                     <Button variant="ghost" size="icon" aria-label={`Delete ${r.label || 'entry'}`} title="Delete" onClick={() => setRows((rs) => rs.filter((x) => x.key !== r.key))} className="size-9 text-muted-foreground hover:text-destructive md:size-8">
-                      <Trash2Icon />
+                      <BinIcon />
                     </Button>
                   </div>
                   {hosts.map((h) => {
@@ -324,7 +325,7 @@ export function SpawnDirsEditor() {
                             aria-invalid={problem ? true : undefined}
                             aria-describedby={problem ? `${id}-err` : undefined}
                             onChange={(e) => update(r.key, (x) => ({ ...x, paths: { ...x.paths, [h]: e.target.value } }))}
-                            className="h-9 pr-8 font-mono text-[0.8125rem] md:h-8"
+                            className="h-9 pr-8 font-mono text-body-sm md:h-8"
                           />
                           <CellStatus value={v} problem={problem} check={check} pending={checking} unreachable={unreachable} host={h} />
                         </div>

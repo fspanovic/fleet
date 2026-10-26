@@ -7,13 +7,14 @@ use std::time::{Duration, Instant};
 
 use colored::Colorize;
 
-use crate::cli::render::{home_rel, plain_table, tail, term_width};
+use crate::cli::render::{home_rel, plain_table, status_text, tail, term_width};
 use crate::core::backend::{self, Prompt};
 use crate::core::config;
 use crate::core::discovery::{self, Backend, Session, claude_home};
 use crate::core::harness::{self, Harness};
 use crate::core::naming;
 use crate::core::title;
+use crate::core::words;
 use crate::error::{Error, Result};
 
 pub use crate::core::config::{NamingConfig, UiConfig};
@@ -166,6 +167,8 @@ pub fn list_rows() -> Vec<Session> {
     title::stamp_display_titles(&mut rows);
     // Which session stack each row is in (read-only: no sync, no writes).
     crate::core::stack::stamp_stacks(&mut rows);
+    // Which rows run in a worktree fleet made for them (read-only, files only).
+    crate::core::workspace::stamp_workspaces(&mut rows);
     // What runs now, for session recovery after a reboot (core::snapshot). Never fails the
     // listing; a no-op in fixture mode and when nothing changed.
     if discovered {
@@ -202,7 +205,7 @@ pub fn peek(target: &str, lines: usize) -> Result<()> {
         "▼".cyan(),
         s.headline().bold(),
         s.backend.label(),
-        s.status,
+        status_text(&s.status),
         where_.dimmed()
     );
     let rule = "─".repeat(term_width().clamp(40, 200));
@@ -544,7 +547,8 @@ fn generate(
 pub struct SpawnOpts {
     pub dir: Option<String>,
     pub backend: Option<Backend>,
-    /// Claude display name for the new session (`claude -n`).
+    /// Claude display name for the new session (`claude -n`); none = a random word
+    /// ([`words::fresh`]), which also names its tmux session.
     pub name: Option<String>,
     /// Model for the new session (`<harness> --model <id>`); None = the harness's default.
     pub model: Option<String>,
@@ -555,8 +559,9 @@ pub struct SpawnOpts {
 }
 
 impl SpawnOpts {
-    /// Fill in the defaults that need the environment: cwd, and the backend we're
-    /// sitting in. Also validates, so a bad dir/name fails before anything opens.
+    /// Fill in the defaults that need the environment: cwd, the backend we're
+    /// sitting in, and a word for a session nobody named ([`words::fresh`]). Also
+    /// validates, so a bad dir/name fails before anything opens.
     pub(crate) fn resolve(&self) -> Result<(String, Backend, Option<String>)> {
         let dir = self
             .dir
@@ -571,8 +576,11 @@ impl SpawnOpts {
             return Err(Error::Other(format!("dir does not exist: {dir}")));
         }
         let backend = self.backend.unwrap_or_else(default_backend);
-        let name = self.name.as_deref().map(clean_name).transpose()?;
-        Ok((dir, backend, name))
+        let name = match self.name.as_deref() {
+            Some(n) => clean_name(n)?,
+            None => words::fresh(),
+        };
+        Ok((dir, backend, Some(name)))
     }
 }
 
@@ -611,10 +619,20 @@ pub fn spawn(prompt: Option<String>, from: Option<String>, opts: SpawnOpts) -> R
             &launcher,
             opts.harness,
         );
-        println!(
-            "dry-run: would spawn a {} session: {line}",
-            backend_kind.label()
-        );
+        // tmux: the session it would land in, which carries the name too.
+        let place = match backend_kind {
+            Backend::Tmux => match backend::plan_tmux_target(
+                opts.tmux_session.as_deref(),
+                name.as_deref(),
+                &dir,
+                &backend::tmux_session_names(),
+            )? {
+                (s, true) => format!("tmux window in session {s}"),
+                (s, false) => format!("tmux session {s}"),
+            },
+            b => format!("{} session", b.label()),
+        };
+        println!("dry-run: would spawn a {place}: {line}");
         return Ok(());
     }
     let desc = backend::spawn(

@@ -10,13 +10,17 @@ import {
   applyGroupEdit,
   boardColumns,
   effectiveGroups,
+  parseCardOrders,
   parseIdList,
   parseViewMode,
+  placeCard,
   regroupToast,
   reorderColumns,
+  stickyCards,
   stickyColumns,
   withStackColumns,
   type BoardColumn,
+  type CardOrders,
   type GroupEdit,
   type ViewMode,
 } from '@/lib/groups'
@@ -34,9 +38,9 @@ export function useViewMode(): [ViewMode, (v: ViewMode) => void] {
 }
 
 /**
- * /api/groups, polled every 30s only while `enabled` (the Board is on screen). A 404 or
- * any error (older server, grouping host unreachable) leaves `groups` null — the board then
- * groups by repo client-side. `run()` is "Regroup now" (POST /api/groups/run) with a toast.
+ * /api/groups, polled every 30s only while `enabled` (the Board or the desktop sidebar's list is on
+ * screen). A 404 or any error (older server, grouping host unreachable) leaves `groups` null — the
+ * board then groups by repo client-side, the desktop list stays flat. `run()` is "Regroup now" (POST /api/groups/run) with a toast.
  */
 export function useGroups(enabled: boolean) {
   const [groups, setGroups] = useState<GroupsResponse | null>(null)
@@ -88,7 +92,7 @@ export function useGroups(enabled: boolean) {
   }, [running])
 
   /**
-   * Rename a group / move a session (POST /api/groups/edit): applied to the board at once,
+   * Rename a group / move a session / set the default group (POST /api/groups/edit): applied to the board at once,
    * replaced by the server's answer; on failure a toast and a fresh fetch put it back.
    */
   const edit = useCallback(
@@ -101,7 +105,8 @@ export function useGroups(enabled: boolean) {
         if (editing.current === 1) setGroups(res)
       } catch (err) {
         failed = true
-        toast.error((err as Error)?.message || (e.op === 'rename' ? 'Rename failed' : 'Move failed'))
+        const fallback = e.op === 'rename' ? 'Rename failed' : e.op === 'default' ? 'Could not change the default group' : 'Move failed'
+        toast.error((err as Error)?.message || fallback)
       } finally {
         editing.current -= 1
         if (failed && editing.current === 0) refresh()
@@ -118,13 +123,32 @@ export function useGroups(enabled: boolean) {
 
 export type GroupsState = ReturnType<typeof useGroups>
 
+const COLLAPSED_KEY = 'fleet.groupsCollapsed'
+
+/** Collapsed section ids of the grouped lists (the mobile board, the desktop sidebar), in `fleet.groupsCollapsed`. */
+export function useCollapsedGroups(): [string[], (id: string) => void] {
+  const [collapsed, setCollapsed] = useState<string[]>(() => parseIdList(storage.getJSON(COLLAPSED_KEY)))
+  const toggle = (id: string) => {
+    const next = collapsed.includes(id) ? collapsed.filter((x) => x !== id) : [...collapsed, id]
+    setCollapsed(next)
+    storage.setJSON(COLLAPSED_KEY, next)
+  }
+  return [collapsed, toggle]
+}
+
 const ORDER_KEY = 'fleet.boardOrder'
+const CARD_ORDER_KEY = 'fleet.cardOrder'
+
+/** Drop card `key` in `column` just before card `before` (null: at the end); `shown` = the column's cards as drawn, `from` = the column it left. */
+export type MoveCard = (column: string, shown: string[], key: string, before: string | null, from?: string) => void
 
 /**
  * The board's columns for `sessions` (already filtered), in a sticky order remembered in
  * `fleet.boardOrder`: a column keeps its place while statuses change; new ones are appended.
  * Session stacks become their own columns first (withStackColumns), so their ids are remembered too.
- * `moveColumn` is a drag on the board (per browser, like the rest of that order).
+ * `moveColumn` is a drag on the board (per browser, like the rest of that order). Cards keep
+ * `byUrgency` order until one is dragged into place in its column (`moveCard`); from then on that
+ * column's card order is sticky too (`fleet.cardOrder`, stickyCards).
  */
 export function useBoardColumns(
   enabled: boolean,
@@ -135,8 +159,9 @@ export function useBoardColumns(
   host: string | null = null,
   /** The session search: dormant cards that do not match are left out. */
   query = '',
-): { columns: BoardColumn[]; moveColumn: (id: string, before: string | null) => void } {
+): { columns: BoardColumn[]; moveColumn: (id: string, before: string | null) => void; moveCard: MoveCard } {
   const [order, setOrder] = useState<string[]>(() => parseIdList(storage.getJSON(ORDER_KEY)))
+  const [cardOrders, setCardOrders] = useState<CardOrders>(() => parseCardOrders(storage.getJSON(CARD_ORDER_KEY)))
   const { index } = useDormant()
   const sticky = useMemo(() => {
     if (!enabled) return null
@@ -145,12 +170,22 @@ export function useBoardColumns(
       const d = dormantMember(m, index)
       return d && matchesDormantMember(d, query) ? d : null
     }
-    return stickyColumns(withStackColumns(boardColumns(sessions, effectiveGroups(groups, allSessions(fleet)).groups, dormantOf), sessions), order)
+    const eff = effectiveGroups(groups, allSessions(fleet))
+    return stickyColumns(withStackColumns(boardColumns(sessions, eff.groups, dormantOf, eff.defaultGroup), sessions), order)
   }, [enabled, sessions, groups, fleet, order, index, host, query])
   if (sticky && (sticky.order.length !== order.length || sticky.order.some((id, i) => id !== order[i]))) setOrder(sticky.order)
+  const cards = useMemo(() => (sticky ? stickyCards(sticky.columns, cardOrders) : null), [sticky, cardOrders])
+  if (cards && cards.orders !== cardOrders) setCardOrders(cards.orders)
   useEffect(() => {
     storage.set(ORDER_KEY, JSON.stringify(order))
   }, [order])
+  useEffect(() => {
+    storage.set(CARD_ORDER_KEY, JSON.stringify(cardOrders))
+  }, [cardOrders])
   const moveColumn = useCallback((id: string, before: string | null) => setOrder((o) => reorderColumns(o, id, before)), [])
-  return { columns: sticky?.columns ?? [], moveColumn }
+  const moveCard = useCallback<MoveCard>(
+    (column, shown, key, before, from) => setCardOrders((o) => placeCard(o, column, shown, key, before, from)),
+    [],
+  )
+  return { columns: cards?.columns ?? [], moveColumn, moveCard }
 }

@@ -164,6 +164,9 @@ test('operator: stamp marks its row; tick clears an operator idle for an hour, o
   t0 += 61 * 60 * 1000;
   op.status = 'busy';
   assert.equal(await operator.tick(), null, 'busy');
+  // `shell`: idle with a background task running — live work, never cleared.
+  op.status = 'shell';
+  assert.equal(await operator.tick(), null, 'shell');
   op.status = 'idle';
   assert.equal(await operator.tick(), 'op-0000-1111');
   assert.deepEqual(sent, [['op-0000-1111', '/clear']]);

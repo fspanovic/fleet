@@ -27,7 +27,7 @@ export function NoteTree({ host, root, open, onToggle, selected, compact = false
 }
 
 function Level({ host, dir, depth, open, onToggle, selected, compact }: Omit<NoteTreeProps, 'root'> & { dir: TreeDir; depth: number }) {
-  const row = cn('flex w-full min-w-0 items-center gap-1.5 rounded-md pr-2 text-left outline-none focus-visible:ring-2 focus-visible:ring-ring/50', compact ? 'h-7 text-[0.8125rem]' : 'min-h-11 text-[0.9375rem]')
+  const row = cn('flex w-full min-w-0 items-center gap-1.5 rounded-md pr-2 text-left outline-none focus-visible:ring-2 focus-visible:ring-ring/50', compact ? 'h-7 text-body-sm' : 'min-h-11 text-md')
   const pad = (d: number) => ({ paddingLeft: `${0.5 + d * (compact ? 0.875 : 1)}rem` })
   return (
     <>
@@ -39,7 +39,7 @@ function Level({ host, dir, depth, open, onToggle, selected, compact }: Omit<Not
               <ChevronRightIcon className={cn('size-3.5 shrink-0 text-dimmer transition-transform', isOpen && 'rotate-90')} />
               {isOpen ? <FolderOpenIcon className="size-4 shrink-0 text-muted-foreground" /> : <FolderIcon className="size-4 shrink-0 text-muted-foreground" />}
               <span className="min-w-0 flex-1 truncate">{d.name}</span>
-              <span className="shrink-0 text-[0.6875rem] text-dimmer tabular-nums">{d.count}</span>
+              <span className="shrink-0 text-2xs text-dimmer tabular-nums">{d.count}</span>
             </button>
             {isOpen ? (
               <ul role="group">

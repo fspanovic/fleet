@@ -1,6 +1,7 @@
 import { useCallback, useMemo, useState, type ReactNode } from 'react'
 
 import { api, isAbortError } from '@/api/client'
+import { noticeFleet } from '@/api/spawnWatch'
 import type { FleetResponse } from '@/api/types'
 import { FleetContext, loadSnapshot, saveSnapshot, type FleetState } from '@/hooks/useFleet'
 import { usePoller } from '@/hooks/usePoller'
@@ -20,6 +21,7 @@ export function FleetProvider({ children, pollMs = FLEET_POLL_MS }: { children: 
     const at = data?.snapshotAt || Date.now()
     setSnap({ fleet: data, at })
     saveSnapshot({ fleet: data, at })
+    noticeFleet(data)
   }, [])
 
   const poll = useCallback(

@@ -12,12 +12,12 @@ export interface DormantState {
   closedCount: number
   /** `host/target` (or `host/*` for all; `host/closed/target` for a closed one) of the requests in flight. */
   busy: ReadonlySet<string>
-  /** Bring one back (`target`: the tmux name or a session id). Starts agents. Toasts the result. */
-  resume: (host: string, target: string) => Promise<void>
-  resumeAll: (host: string) => Promise<void>
+  /** Bring one back (`target`: the tmux name or a session id). Starts agents. Toasts the result; true when something came back. */
+  resume: (host: string, target: string) => Promise<boolean>
+  resumeAll: (host: string) => Promise<boolean>
   forget: (host: string, target: string) => Promise<void>
   /** A recently closed session: resume (starts agents) / forget. No "all" for these. */
-  resumeClosed: (host: string, target: string) => Promise<void>
+  resumeClosed: (host: string, target: string) => Promise<boolean>
   forgetClosed: (host: string, target: string) => Promise<void>
   refresh: () => void
 }
@@ -28,10 +28,10 @@ const EMPTY: DormantState = {
   count: 0,
   closedCount: 0,
   busy: new Set(),
-  resume: async () => {},
-  resumeAll: async () => {},
+  resume: async () => false,
+  resumeAll: async () => false,
   forget: async () => {},
-  resumeClosed: async () => {},
+  resumeClosed: async () => false,
   forgetClosed: async () => {},
   refresh: () => {},
 }

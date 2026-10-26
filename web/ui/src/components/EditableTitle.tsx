@@ -14,6 +14,8 @@ export interface EditableTitleProps {
   fallbackKey?: string
   /** Text style of the title (size, weight). */
   className?: string
+  /** Classes on the box around the title (a row's minimum title width). */
+  boxClassName?: string
   /**
    * Does a tap on a touch screen edit? `false` (rows, cards): the tap opens the session,
    * long-press edits. The session header: `true`.
@@ -26,14 +28,14 @@ export interface EditableTitleProps {
  * clicking away saves, Esc cancels. Saving is optimistic (hooks/useTitles.ts) and rolls back
  * with a toast when the session is busy or the rename fails.
  */
-export function EditableTitle({ session, scope, fallbackKey, className, tapToEdit = false }: EditableTitleProps) {
+export function EditableTitle({ session, scope, fallbackKey, className, boxClassName, tapToEdit = false }: EditableTitleProps) {
   const key = session ? sessionKey(session) : (fallbackKey ?? '')
   const { title, saving } = useSessionTitle(session, fallbackKey)
   const editing = useEditing(scope, key) && !!session
   const rename = useRename()
 
   return (
-    <span className="flex min-w-0 flex-1 items-center gap-1">
+    <span className={cn('flex min-w-0 flex-1 items-center gap-1', boxClassName)}>
       <InlineEdit
         value={title}
         editing={editing}

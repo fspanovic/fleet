@@ -3,7 +3,7 @@
 //! and joined with the local checkouts (`fleet repos`) and their worktrees.
 //!
 //! GitHub is reached only through the `gh` CLI (`gh api graphql`): its auth, its host, no token
-//! handling here. Three searches, run in parallel:
+//! handling here. Four searches, run in parallel:
 //!
 //! - `author:@me` → [`Column::DraftMine`], [`Column::ReadyToMergeMine`] (approved) or
 //!   [`Column::ReviewMine`]
@@ -30,6 +30,7 @@
 //!
 //! Nothing in here prints.
 
+use std::cell::OnceCell;
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -38,6 +39,7 @@ use std::time::Duration;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
+use crate::core::worktree::{self, git_run};
 use crate::core::{repos, tools};
 use crate::error::{Error, Result};
 
@@ -51,6 +53,11 @@ const MENTIONS_PAGE: usize = 25;
 /// How much of the line with the mention [`Mention::excerpt`] keeps.
 const EXCERPT_CHARS: usize = 140;
 const MAX_PAGES: usize = 4;
+/// At most this many [`Pr::links`] per PR.
+const MAX_LINKS: usize = 20;
+/// The cache file's shape; a cache of another version is fetched again (2: [`Pr::links`];
+/// 3: a list of merged PRs, since dropped; 4: without it).
+const CACHE_VERSION: u32 = 4;
 const GH_TIMEOUT: Duration = Duration::from_secs(60);
 
 // ---------- config ----------
@@ -293,6 +300,10 @@ pub struct Pr {
     /// The latest time someone else @mentioned you on it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub mention: Option<Mention>,
+    /// The distinct http(s) URLs in its description, in order, at most [`MAX_LINKS`]
+    /// ([`body_links`]): what it says it is about — an issue, a ticket, a doc.
+    #[serde(default)]
+    pub links: Vec<String>,
     /// How long it has waited for its column. Set at read time ([`rotting`]).
     #[serde(default)]
     pub rotting: Rotting,
@@ -441,9 +452,42 @@ fn parse_node(n: &Value, column: Column, me: &str) -> Option<Pr> {
         requested_reviewers,
         my_review,
         mention: None,
+        links: body_links(n["body"].as_str().unwrap_or("")),
         rotting: Rotting::Fresh,
         local: None,
     })
+}
+
+/// The distinct `http://` / `https://` URLs in `body`, in order, at most [`MAX_LINKS`]. A URL
+/// ends at whitespace or a quote, bracket, `|` or backslash — a markdown `[x](url)` or `<url>` gives
+/// just the url — and trailing sentence punctuation (`.,;:!?*_~`) is not part of it.
+pub fn body_links(body: &str) -> Vec<String> {
+    let stop = |c: char| c.is_whitespace() || "<>()[]{}\"'`|\\".contains(c);
+    // ASCII lowercasing keeps every byte offset: `lower` indexes `body`.
+    let lower = body.to_ascii_lowercase();
+    let mut out: Vec<String> = Vec::new();
+    let mut at = 0;
+    while out.len() < MAX_LINKS {
+        let Some(i) = lower[at..].find("http") else {
+            break;
+        };
+        let start = at + i;
+        let Some(scheme) = ["https://", "http://"]
+            .into_iter()
+            .find(|p| lower[start..].starts_with(p))
+        else {
+            at = start + 4;
+            continue;
+        };
+        let tail = &body[start..];
+        let end = tail.find(stop).unwrap_or(tail.len());
+        let url = tail[..end].trim_end_matches(['.', ',', ';', ':', '!', '?', '*', '_', '~']);
+        if url.len() > scheme.len() && !out.iter().any(|u| u == url) {
+            out.push(url.to_string());
+        }
+        at = start + end.max(scheme.len());
+    }
+    out
 }
 
 /// `@login` in `text` (whole handle, any case; not an email or a path) → that line, shortened.
@@ -624,7 +668,7 @@ pub fn resolve_mentions(prs: &mut Vec<Pr>, seen: &HashMap<String, i64>) {
 
 const FIELDS: &str = r#"
 fragment pr on PullRequest {
-  number title url isDraft createdAt updatedAt additions deletions changedFiles
+  number title url body isDraft createdAt updatedAt additions deletions changedFiles
   baseRefName headRefName isCrossRepository reviewDecision
   repository { name owner { login } }
   author { login }
@@ -637,7 +681,6 @@ fragment pr on PullRequest {
 /// What the mentions search needs on top: who said what, when.
 const MENTION_FIELDS: &str = r#"
 fragment mentions on PullRequest {
-  body
   mentionComments: comments(last: 30) { nodes { author { login } createdAt body url } }
   mentionReviews: reviews(last: 20) { nodes { author { login } submittedAt body url
     comments(last: 10) { nodes { author { login } createdAt body url } } } }
@@ -672,8 +715,8 @@ pub fn gh_bin() -> String {
     tools::resolve_binary("gh", cfg.as_deref())
 }
 
-/// One search, every page (up to [`MAX_PAGES`]); `mentions` adds [`MENTION_FIELDS`].
-/// → (viewer login, nodes, truncated).
+/// One search, every page (up to [`MAX_PAGES`]); `mentions` adds the comment and review
+/// fields ([`query`]). → (viewer login, nodes, truncated).
 fn search(gh: &str, q: &str, mentions: bool) -> Result<(String, Vec<Value>, bool)> {
     let query = query(mentions);
     let page = if mentions { MENTIONS_PAGE } else { PAGE };
@@ -784,7 +827,7 @@ pub fn fetch(s: &Settings, now_ms: i64) -> Result<Snapshot> {
     let truncated = parts.iter().any(|p| p.2);
     let prs = classify(&user, &parts[0].1, &parts[1].1, &parts[2].1, &parts[3].1);
     Ok(Snapshot {
-        version: 1,
+        version: CACHE_VERSION,
         user,
         scope,
         fetched_at: now_ms,
@@ -857,7 +900,7 @@ pub fn get(s: &Settings, mode: Mode, now_ms: i64) -> Result<View> {
 
 fn get_snapshot(s: &Settings, mode: Mode, now_ms: i64) -> Result<View> {
     let path = cache_path();
-    let cached = load_cache(&path).filter(|c| c.version == 1 && c.scope == s.scope());
+    let cached = load_cache(&path).filter(|c| c.version == CACHE_VERSION && c.scope == s.scope());
     let fresh = |c: &Snapshot| now_ms - c.fetched_at < s.refresh * 1000;
     let want = match (&cached, mode) {
         (_, Mode::Refresh) | (None, Mode::Auto) => true,
@@ -966,46 +1009,66 @@ fn worktrees(repo: &Path) -> Vec<(String, String)> {
     res
 }
 
-/// Does `repo`'s `origin` point at `owner/name` on some host?
-fn origin_is(repo: &Path, owner: &str, name: &str) -> bool {
-    let Some(url) = repos::git(repo, &["remote", "get-url", "origin"]) else {
-        return false;
-    };
-    let url = url.trim_end_matches('/').trim_end_matches(".git");
-    let want = format!("{owner}/{name}").to_ascii_lowercase();
-    let url = url.to_ascii_lowercase();
-    url.ends_with(&format!("/{want}")) || url.ends_with(&format!(":{want}"))
-}
-
 /// A repo's path and its (branch, worktree path) pairs.
 type RepoCheckout = (PathBuf, Vec<(String, String)>);
 
-/// The checkout of `owner/name` among `all`: the directory named `name`, by `origin` when two are.
-fn find_repo<'a>(all: &'a [repos::Repo], owner: &str, name: &str) -> Option<&'a repos::Repo> {
-    let named: Vec<&repos::Repo> = all
-        .iter()
-        .filter(|r| r.name.eq_ignore_ascii_case(name))
-        .collect();
-    match named.len() {
-        0 => None,
-        1 => Some(named[0]),
-        _ => named
-            .iter()
-            .copied()
-            .find(|r| origin_is(&r.path, owner, name)),
+/// The `fleet repos` checkouts, each one's `origin` read (with git) at most once and only when
+/// a lookup needs it.
+struct Clones {
+    all: Vec<repos::Repo>,
+    /// [`origin_slug`] of `all[i]`.
+    slugs: Vec<OnceCell<Option<(String, String)>>>,
+}
+
+impl Clones {
+    fn discover(roots: &repos::Settings) -> Clones {
+        let all = repos::discover(roots);
+        let slugs = all.iter().map(|_| OnceCell::new()).collect();
+        Clones { all, slugs }
+    }
+
+    /// Does `all[i]`'s `origin` point at `owner/name` on some host (ssh or https, with or
+    /// without `.git`)? GitHub names are case-insensitive.
+    fn origin_is(&self, i: usize, owner: &str, name: &str) -> bool {
+        self.slugs[i]
+            .get_or_init(|| origin_slug(&self.all[i].path))
+            .as_ref()
+            .is_some_and(|(o, n)| o.eq_ignore_ascii_case(owner) && n.eq_ignore_ascii_case(name))
+    }
+
+    /// The checkout of `owner/name`: the directory named `name` (by `origin` when several
+    /// are). When no directory is — a clone under another name, like `~/Code/web` of
+    /// `acme/frontend` — the repo whose `origin` is `owner/name`; when several are, the first
+    /// in [`repos::discover`] order (root order, then directory name).
+    fn find(&self, owner: &str, name: &str) -> Option<&repos::Repo> {
+        let named: Vec<usize> = (0..self.all.len())
+            .filter(|&i| self.all[i].name.eq_ignore_ascii_case(name))
+            .collect();
+        let by_name = match named[..] {
+            [] => None,
+            [i] => Some(i),
+            _ => named
+                .iter()
+                .copied()
+                .find(|&i| self.origin_is(i, owner, name)),
+        };
+        by_name
+            .or_else(|| (0..self.all.len()).find(|&i| self.origin_is(i, owner, name)))
+            .map(|i| &self.all[i])
     }
 }
 
-/// Fill in [`Pr::local`] from the `fleet repos` checkouts: the repo whose directory name is
-/// the PR's repo name (and, when two share it, whose `origin` is the PR's repo), and the
-/// worktree that has the head branch. Repos are matched once each, not once per PR.
+/// Fill in [`Pr::local`] from the `fleet repos` checkouts: the PR's repo as [`Clones::find`]
+/// picks it (the directory named like the repo, else the one whose `origin` is the PR's
+/// repo), and the worktree that has the head branch. Repos are matched once each, not once
+/// per PR, and each repo's `origin` is read at most once.
 pub fn link_local(prs: &mut [Pr], roots: &repos::Settings) {
-    let all = repos::discover(roots);
+    let clones = Clones::discover(roots);
     let mut found: HashMap<(String, String), Option<RepoCheckout>> = HashMap::new();
     for pr in prs.iter_mut() {
         let key = (pr.owner.clone(), pr.repo.clone());
         let hit = found.entry(key).or_insert_with(|| {
-            let repo = find_repo(&all, &pr.owner, &pr.repo)?;
+            let repo = clones.find(&pr.owner, &pr.repo)?;
             Some((repo.path.clone(), worktrees(&repo.path)))
         });
         if let Some((path, wts)) = hit {
@@ -1221,24 +1284,8 @@ pub fn context_line(pr: &PrHead, branch: &str, path: &str) -> String {
     )
 }
 
-fn git_run(dir: &Path, args: &[&str], timeout: Duration) -> Result<String> {
-    let o = repos::output_with_timeout(repos::git_cmd(dir, args), timeout)
-        .map_err(|e| Error::Other(format!("git {}: {e}", args.join(" "))))?;
-    if !o.status.success() {
-        let err = String::from_utf8_lossy(&o.stderr);
-        let line = err
-            .lines()
-            .map(str::trim)
-            .find(|l| l.starts_with("fatal:") || l.starts_with("error:"))
-            .or_else(|| err.lines().map(str::trim).find(|l| !l.is_empty()))
-            .unwrap_or("failed")
-            .to_string();
-        return Err(Error::exit(1, format!("git {}: {line}", args.join(" "))));
-    }
-    Ok(String::from_utf8_lossy(&o.stdout).trim().to_string())
-}
-
-/// Check `pr` out in a worktree of its repo (found under the `fleet repos` roots): the
+/// Check `pr` out in a worktree of its repo (found under the `fleet repos` roots by
+/// [`Clones::find`]: named like the repo, else by `origin`): the
 /// existing one when its branch is already checked out somewhere, else a new one under
 /// `prs.worktrees`, named `<repo>-<branch>`. Fetches the head first. A same-repo PR gets its
 /// real branch (tracking `origin/<branch>`, or the local branch when there is one); a fork's
@@ -1250,8 +1297,8 @@ pub fn checkout(
     pr: PrHead,
     dry_run: bool,
 ) -> Result<Worktree> {
-    let all = repos::discover(roots);
-    let repo = find_repo(&all, &pr.owner, &pr.repo).ok_or_else(|| {
+    let clones = Clones::discover(roots);
+    let repo = clones.find(&pr.owner, &pr.repo).ok_or_else(|| {
         Error::exit(
             1,
             format!(
@@ -1314,34 +1361,13 @@ pub fn checkout(
         )?;
     }
 
-    std::fs::create_dir_all(&root)?;
-    let has_local = repos::git(
-        &repo.path,
-        &[
-            "rev-parse",
-            "--verify",
-            "--quiet",
-            &format!("refs/heads/{branch}"),
-        ],
-    )
-    .is_some();
-    let t = Duration::from_secs(120);
-    if has_local {
-        git_run(
-            &repo.path,
-            &["worktree", "add", "--quiet", &path_s, &branch],
-            t,
-        )?;
+    let upstream = format!("origin/{}", pr.head_branch);
+    let how = if worktree::has_local_branch(&repo.path, &branch) {
+        worktree::Branch::Existing
     } else {
-        let upstream = format!("origin/{}", pr.head_branch);
-        git_run(
-            &repo.path,
-            &[
-                "worktree", "add", "--quiet", "--track", "-b", &branch, &path_s, &upstream,
-            ],
-            t,
-        )?;
-    }
+        worktree::Branch::Track(&upstream)
+    };
+    worktree::add(&repo.path, &path, &branch, how)?;
     Ok(done(path_s, true))
 }
 
@@ -1747,6 +1773,54 @@ mod tests {
         let r = p20.my_review.as_ref().unwrap();
         assert_eq!(r.state, "changesRequested");
         assert!(r.new_commits);
+    }
+
+    #[test]
+    fn body_links_are_distinct_trimmed_and_capped() {
+        let body = "Task: https://app.example.com/1-acme/tasks/42.\n\
+            See [the doc](https://docs.example.com/a?b=1#c), <HTTPS://Example.com/x>,\n\
+            again https://app.example.com/1-acme/tasks/42 and http://plain.example.org/p, \"https://q.example/z\"\n\
+            not a link: http:// · httpd · mailto:me@example.com · ftp://x · é https://ü.example/ä!";
+        assert_eq!(
+            body_links(body),
+            vec![
+                "https://app.example.com/1-acme/tasks/42",
+                "https://docs.example.com/a?b=1#c",
+                "HTTPS://Example.com/x",
+                "http://plain.example.org/p",
+                "https://q.example/z",
+                "https://ü.example/ä",
+            ]
+        );
+        assert!(body_links("").is_empty());
+        let many: String = (0..30).map(|i| format!("https://x.example/{i} ")).collect();
+        let links = body_links(&many);
+        assert_eq!(links.len(), MAX_LINKS);
+        assert_eq!(links[0], "https://x.example/0");
+    }
+
+    #[test]
+    fn a_pr_carries_the_links_in_its_description() {
+        let mine = vec![
+            node(
+                "app",
+                1,
+                json!({ "author": { "login": "me" }, "body": "Fixes https://app.example.com/1-acme/tasks/7" }),
+            ),
+            node(
+                "app",
+                2,
+                json!({ "author": { "login": "me" }, "body": null }),
+            ),
+        ];
+        let prs = classify("me", &mine, &[], &[], &[]);
+        let links = |n: u64| prs.iter().find(|p| p.number == n).unwrap().links.clone();
+        assert_eq!(links(1), vec!["https://app.example.com/1-acme/tasks/7"]);
+        assert!(links(2).is_empty());
+        // A cache written before `links` reads as none.
+        let mut v = serde_json::to_value(&prs[0]).unwrap();
+        v.as_object_mut().unwrap().remove("links");
+        assert!(serde_json::from_value::<Pr>(v).unwrap().links.is_empty());
     }
 
     #[test]
@@ -2310,5 +2384,99 @@ mod tests {
         let got = std::fs::canonicalize(local.worktree.as_ref().unwrap()).unwrap();
         assert_eq!(got, wt_real);
         assert!(prs.iter().find(|p| p.number == 3).unwrap().local.is_none());
+    }
+
+    /// An empty repo at `root/dir` whose `origin` is `url` (`None`: no remote).
+    fn repo_with_origin(root: &Path, dir: &str, url: Option<&str>) -> PathBuf {
+        let path = root.join(dir);
+        std::fs::create_dir_all(&path).unwrap();
+        git(&path, &["init", "-q"]);
+        if let Some(url) = url {
+            git(&path, &["remote", "add", "origin", url]);
+        }
+        path
+    }
+
+    fn clones_of(roots: &[&Path]) -> Clones {
+        let roots: Vec<&str> = roots.iter().map(|r| r.to_str().unwrap()).collect();
+        Clones::discover(&repos::Settings::from_value(&json!({ "roots": roots })))
+    }
+
+    #[test]
+    fn find_falls_back_to_origin_when_no_directory_has_the_name() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path().join("code");
+        repo_with_origin(&root, "aaa-none", None);
+        repo_with_origin(&root, "other", Some("git@github.com:acme/other.git"));
+        let web = repo_with_origin(&root, "web", Some("git@github.com:acme/frontend.git"));
+        repo_with_origin(&root, "zz-web", Some("https://github.com/acme/frontend"));
+        let https = repo_with_origin(&root, "site", Some("https://github.com/acme/www.git/"));
+        repo_with_origin(&root, "fork", Some("git@github.com:someone/frontend.git"));
+
+        let clones = clones_of(&[&root]);
+        let path = |owner: &str, name: &str| clones.find(owner, name).map(|r| r.path.clone());
+        // Several clones of acme/frontend, none named `frontend`: the first in discover order.
+        assert_eq!(path("acme", "frontend"), Some(web.clone()));
+        assert_eq!(path("Acme", "FrontEnd"), Some(web));
+        assert_eq!(path("acme", "www"), Some(https));
+        assert_eq!(path("acme", "nope"), None);
+        assert_eq!(path("nobody", "frontend"), None);
+    }
+
+    #[test]
+    fn find_prefers_the_directory_named_like_the_repo() {
+        let tmp = tempfile::tempdir().unwrap();
+        let (a, b) = (tmp.path().join("a"), tmp.path().join("b"));
+        // A lone `frontend` wins even over a clone whose `origin` matches (unchanged rule).
+        repo_with_origin(&a, "app", Some("git@github.com:acme/frontend.git"));
+        let named = repo_with_origin(&a, "frontend", None);
+        assert_eq!(
+            clones_of(&[&a])
+                .find("acme", "frontend")
+                .map(|r| r.path.clone()),
+            Some(named)
+        );
+        // Two `api`s: the one whose `origin` matches.
+        repo_with_origin(&a, "api", Some("git@github.com:someone/api.git"));
+        let api = repo_with_origin(&b, "api", Some("git@github.com:acme/api.git"));
+        let clones = clones_of(&[&a, &b]);
+        assert_eq!(
+            clones.find("acme", "api").map(|r| r.path.clone()),
+            Some(api)
+        );
+        // Two `api`s, neither of acme/lib: the clone of it under another name.
+        let lib = repo_with_origin(&b, "libs", Some("git@github.com:acme/lib.git"));
+        repo_with_origin(&a, "lib", Some("git@github.com:x/lib.git"));
+        repo_with_origin(&b, "lib", Some("git@github.com:y/lib.git"));
+        assert_eq!(
+            clones_of(&[&a, &b])
+                .find("acme", "lib")
+                .map(|r| r.path.clone()),
+            Some(lib)
+        );
+    }
+
+    #[test]
+    fn link_local_and_checkout_find_a_clone_by_origin() {
+        let (tmp, root, clone) = origin_and_clone();
+        // The clone lives under another name, its `origin` the PR's repo over ssh.
+        let web = root.join("web");
+        std::fs::rename(&clone, &web).unwrap();
+        git(
+            &web,
+            &["remote", "set-url", "origin", "git@github.com:acme/app.git"],
+        );
+        let roots = repos::Settings::from_value(&json!({ "roots": [root.to_str().unwrap()] }));
+
+        let mut prs = classify("me", &[node("app", 2, json!({}))], &[], &[], &[]);
+        link_local(&mut prs, &roots);
+        let local = prs[0].local.as_ref().expect("linked by origin");
+        assert_eq!(local.repo_path, web.display().to_string());
+
+        let s =
+            Settings::from_value(&json!({ "worktrees": tmp.path().join("wt").to_str().unwrap() }));
+        let plan = checkout(&s, &roots, head_of("feat/login", 12, false), true).unwrap();
+        assert!(plan.created);
+        assert_eq!(plan.repo_path, web.display().to_string());
     }
 }

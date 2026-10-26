@@ -27,7 +27,7 @@ export function CompletionPopup({ id, kind, items, active, status, desktop, onHo
 
   return (
     <div
-      className="absolute inset-x-0 bottom-full z-20 mb-2 overflow-hidden rounded-xl border bg-popover text-popover-foreground shadow-lg"
+      className="absolute inset-x-0 bottom-full z-20 mb-2 animate-in overflow-hidden rounded-xl bg-popover text-popover-foreground shadow-overlay duration-(--dur-base) ease-out fade-in-0 slide-in-from-bottom-1"
       // Keep the caret in the textarea (and a touch keyboard up) while tapping a row.
       onPointerDown={(e) => e.preventDefault()}
       onMouseDown={(e) => e.preventDefault()}
@@ -54,8 +54,8 @@ export function CompletionPopup({ id, kind, items, active, status, desktop, onHo
               onClick={() => onPick(s)}
             >
               <span className="flex min-w-0 items-baseline gap-2">
-                <span className="truncate font-mono text-[0.8125rem] text-foreground">{s.label}</span>
-                {s.hint ? <span className="shrink-0 truncate text-[0.6875rem] text-dimmer">{s.hint}</span> : null}
+                <span className="truncate font-mono text-body-sm text-foreground">{s.label}</span>
+                {s.hint ? <span className="shrink-0 truncate text-2xs text-dimmer">{s.hint}</span> : null}
               </span>
               {s.detail ? <span className="truncate text-xs text-muted-foreground">{s.detail}</span> : null}
             </li>

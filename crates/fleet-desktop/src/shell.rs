@@ -1,7 +1,8 @@
 //! The window chrome: no macOS title bar, the traffic lights overlaid on the
 //! page's own top bar. The page learns it is inside the app from an
 //! initialization script (`data-shell="desktop"`, `data-attach="iterm"` when it opens
-//! `fleet://attach` links, + CSS variables), not IPC.
+//! `fleet://attach` links, `data-notify="native"` when it posts `fleet://notify` ones,
+//! + CSS variables), not IPC. The dock badge reads the page's title (`badge_count`).
 
 use tauri::Url;
 
@@ -24,10 +25,22 @@ pub fn script(fullscreen: bool) -> String {
         "(function(){{var d=document.documentElement;if(!d)return;\
 d.dataset.shell='desktop';d.classList.add('shell-desktop');\
 d.dataset.attach='iterm';\
+d.dataset.notify='native';\
 d.dataset.fullscreen='{fullscreen}';\
 d.style.setProperty('--titlebar-inset-left','{inset}px');\
 d.style.setProperty('--titlebar-height','{TITLEBAR_HEIGHT_PX}px');}})();"
     )
+}
+
+/// The dock badge for a page title: the web UI starts it with `(<n>) ` while n sessions
+/// wait on you (lib/notify.ts `waitingTitlePrefix`); None (no badge) otherwise.
+pub fn badge_count(title: &str) -> Option<i64> {
+    let rest = title.strip_prefix('(')?;
+    let (n, tail) = rest.split_once(')')?;
+    if !tail.starts_with(' ') || n.is_empty() || !n.bytes().all(|b| b.is_ascii_digit()) {
+        return None;
+    }
+    n.parse::<i64>().ok().filter(|&n| n > 0)
 }
 
 /// The script a native menu item runs to ask the web UI for an action (`fleet:command`, the
@@ -59,6 +72,7 @@ mod tests {
         assert!(s.contains("d.dataset.shell='desktop'"));
         assert!(s.contains("classList.add('shell-desktop')"));
         assert!(s.contains("d.dataset.attach='iterm'"));
+        assert!(s.contains("d.dataset.notify='native'"));
         assert!(s.contains("'--titlebar-inset-left','88px'"));
         assert!(s.contains("'--titlebar-height','56px'"));
         assert!(s.contains("fullscreen='false'"));
@@ -101,5 +115,17 @@ mod tests {
             Some("https://fleet.example.com/*")
         );
         assert_eq!(drag_pattern(&u("data:text/plain,x")), None);
+    }
+
+    #[test]
+    fn badge_counts_the_title_prefix() {
+        assert_eq!(badge_count("(2) lapwing · Fleet"), Some(2));
+        assert_eq!(badge_count("(12) Fleet"), Some(12));
+        assert_eq!(badge_count("Fleet"), None);
+        assert_eq!(badge_count("(0) Fleet"), None);
+        assert_eq!(badge_count("(x) Fleet"), None);
+        assert_eq!(badge_count("() Fleet"), None);
+        assert_eq!(badge_count("(2)Fleet"), None);
+        assert_eq!(badge_count("lapwing (2) · Fleet"), None);
     }
 }

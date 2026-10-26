@@ -124,12 +124,24 @@ pub fn terminal_label(s: &Session) -> String {
 
 /// Glyph + word for a registry status. `waiting` is the one that matters: the
 /// session is blocked on the user and nothing else will move until they look.
+/// `shell` is idle with a background task running: the idle colour, a ringed dot
+/// and `idle · bg` (fits the 9-column state cell; [`status_text`] spells it out).
 pub fn status_words(status: &str) -> (&'static str, &str) {
     match status {
         "busy" => ("●", "working"),
         "idle" => ("○", "idle"),
+        crate::core::discovery::SHELL => ("◎", "idle · bg"),
         "waiting" => ("⏸", "needs you"),
         other => ("·", other),
+    }
+}
+
+/// The raw status for plain-text lines (`peek`'s header, `jobs show`), with
+/// `shell` spelled out as `idle · background task`.
+pub fn status_text(status: &str) -> &str {
+    match status {
+        crate::core::discovery::SHELL => "idle · background task",
+        other => other,
     }
 }
 
@@ -189,7 +201,7 @@ pub fn plain_table_titled(rows: &[Session], host: Option<&str>) -> String {
         let state = column(word, 9);
         let (dot, state) = match r.status.as_str() {
             "busy" => (dot.green(), state.green()),
-            "idle" => (dot.dimmed(), state.dimmed()),
+            "idle" | crate::core::discovery::SHELL => (dot.dimmed(), state.dimmed()),
             "waiting" => (dot.yellow(), state.yellow().bold()),
             _ => (dot.normal(), state.normal()),
         };
@@ -239,6 +251,24 @@ mod tests {
         let out = plain_table(std::slice::from_ref(&s));
         assert!(out.contains("statusline-blank"), "{out}");
         assert!(!out.contains("app-9d"), "{out}");
+    }
+
+    // `shell` (idle with a background task running) reads as idle, marked: a ringed
+    // dot and `idle · bg` in the table, spelled out where a line has room.
+    #[test]
+    fn a_background_task_is_shown_on_an_idle_row() {
+        assert_eq!(status_words("shell"), ("◎", "idle · bg"));
+        assert_eq!(status_words("idle"), ("○", "idle"));
+        assert_eq!(status_text("shell"), "idle · background task");
+        assert_eq!(status_text("busy"), "busy");
+        let s = Session {
+            pid: 7,
+            status: "shell".into(),
+            ..Default::default()
+        };
+        let out = plain_table(std::slice::from_ref(&s));
+        assert!(out.contains("◎") && out.contains("idle · bg"), "{out}");
+        assert!(!out.contains("shell"), "{out}");
     }
 
     #[test]

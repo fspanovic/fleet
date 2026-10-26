@@ -2,7 +2,30 @@ import { describe, expect, it } from 'vitest'
 
 import { ApiError } from '@/api/client'
 import type { ClosedView, DormantView } from '@/api/types'
-import { closedCount, closedMeta, dormantCount, dormantErrorMessage, dormantIndex, dormantMember, dormantMeta, dormantMissing, dormantTitles, hasEntries, hostDormant, matchesDormantMember, restoreSummary, searchDormant } from '@/lib/dormant'
+import {
+  closedCount,
+  closedHref,
+  closedMeta,
+  dormantCount,
+  dormantErrorMessage,
+  dormantIndex,
+  dormantMember,
+  dormantMeta,
+  dormantMissing,
+  dormantTitles,
+  findPastEntry,
+  hasEntries,
+  hostDormant,
+  matchesDormantMember,
+  pastErrorText,
+  pastMarker,
+  pastRecord,
+  pastTitle,
+  pastWhen,
+  previewSessionId,
+  restoreSummary,
+  searchDormant,
+} from '@/lib/dormant'
 
 const NOW = Date.parse('2026-10-04T12:00:00Z')
 const tmux: DormantView = {
@@ -110,5 +133,69 @@ describe('matchesDormantMember', () => {
     expect(matchesDormantMember(m, 'laptop')).toBe(true)
     expect(matchesDormantMember(m, 'abc123')).toBe(true)
     expect(matchesDormantMember(m, 'zzz')).toBe(false)
+  })
+})
+
+describe('closed / dormant preview', () => {
+  const closed: ClosedView = {
+    kind: 'claude',
+    target: 'cccc-3',
+    name: 'Old work',
+    since: '2026-10-04T10:00:00Z',
+    closedAt: '2026-10-04T10:00:00Z',
+    tmuxSession: 'api',
+    windows: 1,
+    panes: 1,
+    sessions: [{ sessionId: 'cccc-3', name: 'old', title: 'Old work', cwd: '/w/app', harness: 'codex' }],
+  }
+  const hosts = [{ host: 'laptop', views: [tmux], closed: [closed] }]
+
+  it('the route and which session a row opens', () => {
+    expect(closedHref('work station', 'a/b')).toBe('/closed/work%20station/a%2Fb')
+    expect(previewSessionId(tmux)).toBe('aaaa-1')
+    expect(previewSessionId({ ...tmux, sessions: [] })).toBeNull()
+  })
+
+  it('finds the entry of a session id in either list, on its own host only', () => {
+    expect(findPastEntry(hosts, 'laptop', 'cccc-3')).toMatchObject({ pool: 'closed', view: closed })
+    expect(findPastEntry(hosts, 'laptop', 'aaaa-1')).toMatchObject({ pool: 'dormant', view: tmux, session: { title: 'Fix login' } })
+    expect(findPastEntry(hosts, 'workstation', 'aaaa-1')).toBeNull()
+    expect(findPastEntry(hosts, 'laptop', 'zzzz')).toBeNull()
+  })
+
+  it('a record from the sidebar until the server answers; the server wins', () => {
+    const fromList = pastRecord(null, findPastEntry(hosts, 'laptop', 'cccc-3'))
+    expect(fromList).toEqual({
+      pool: 'closed', kind: 'claude', target: 'cccc-3', name: 'Old work', title: 'Old work', sessionName: 'old', cwd: '/w/app',
+      harness: 'codex', since: '2026-10-04T10:00:00Z', closedAt: '2026-10-04T10:00:00Z', tmuxSession: 'api',
+    })
+    const dormantRec = pastRecord(null, findPastEntry(hosts, 'laptop', 'aaaa-1'))
+    expect(dormantRec).toMatchObject({ pool: 'dormant', target: 'fix-login', harness: 'claude', closedAt: null, tmuxSession: null })
+    const server = { ...fromList!, title: 'Renamed' }
+    expect(pastRecord(server, findPastEntry(hosts, 'laptop', 'cccc-3'))).toBe(server)
+    expect(pastRecord(null, null)).toBeNull()
+  })
+
+  it('title, when and marker', () => {
+    const r = pastRecord(null, findPastEntry(hosts, 'laptop', 'cccc-3'))
+    expect(pastTitle(r, 'cccc-3')).toBe('Old work')
+    expect(pastTitle({ ...r!, title: null, sessionName: null }, 'cccc-3')).toBe('Old work')
+    expect(pastTitle(null, '0123456789abcdef')).toBe('01234567')
+    expect(pastWhen(r, NOW)).toBe('closed 2h ago')
+    expect(pastWhen(pastRecord(null, findPastEntry(hosts, 'laptop', 'aaaa-1')), NOW)).toBe('down 3h')
+    expect(pastWhen(null, NOW)).toBe('')
+    expect(pastMarker(r)).toBe('Closed — read only')
+    expect(pastMarker({ pool: 'dormant' })).toBe('Dormant — read only')
+    expect(pastMarker(null)).toBe('Closed — read only')
+  })
+
+  it('error texts: gone from the lists, no transcript, an old host', () => {
+    expect(pastErrorText(null)).toBeNull()
+    expect(pastErrorText(new ApiError('not a recently closed or dormant session: x', 404))).toMatch(/no longer in the recently closed/i)
+    expect(pastErrorText(new ApiError('transcript not found for this session', 404))).toBe('No transcript on disk for this session')
+    expect(pastErrorText(new ApiError('not found', 404))).toMatch(/update it there/)
+    expect(pastErrorText(new ApiError('session recovery is not available on this server', 501))).toMatch(/update it there/)
+    expect(pastErrorText(new ApiError('network unreachable', 0))).toBe('network unreachable')
+    expect(pastErrorText(new ApiError('fleet restore failed: boom', 502))).toBe('fleet restore failed: boom')
   })
 })

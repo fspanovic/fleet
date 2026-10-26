@@ -63,10 +63,10 @@ export function hostColorSlot(host: string | null | undefined): number {
 
 export type CtxLevel = 'low' | 'warn' | 'hot'
 
-/** Same bands as the CLI: <60 calm, 60–85 warn, >85 hot. */
+/** Web UI bands: ≤20 calm, >20 warn, >40 hot. */
 export function ctxLevel(pct: number): CtxLevel {
-  if (pct > 85) return 'hot'
-  if (pct >= 60) return 'warn'
+  if (pct > 40) return 'hot'
+  if (pct > 20) return 'warn'
   return 'low'
 }
 
@@ -79,7 +79,6 @@ export function fmtTokens(n: number): string {
   return `${Number.isInteger(Math.round(m * 10) / 10) ? Math.round(m) : m.toFixed(1)}M`
 }
 
-/** "124k / 200k · 62%" — '' for a missing or malformed context. */
 /** Short human model name: `claude-opus-5-5` → `Opus 5.5`, `claude-haiku-4-5-20251001` → `Haiku 4.5`, `…[1m]` → `… 1M`. */
 export function modelLabel(id: string | null | undefined): string {
   if (!id) return ''
@@ -90,6 +89,7 @@ export function modelLabel(id: string | null | undefined): string {
   return `${family} ${m[2]}${m[3] ? `.${m[3]}` : ''}${oneM ? ' 1M' : ''}`
 }
 
+/** "124k / 200k · 62%" — '' for a missing or malformed context. */
 export function ctxSummary(c: ContextUsage | null | undefined): string {
   if (!c || !Number.isFinite(c.used) || !Number.isFinite(c.window)) return ''
   return `${fmtTokens(c.used)} / ${fmtTokens(c.window)} · ${Math.round(c.pct)}%`

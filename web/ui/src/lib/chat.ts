@@ -83,3 +83,14 @@ export function splitPasted(text: string): TextPart[] {
   if (rest || !parts.length) parts.push({ pasted: false, text: last ? rest : text })
   return parts.filter((p) => p.text)
 }
+
+/**
+ * The prompts Claude Code still holds in its queue (`queued: true`, always last): how many, and the
+ * last one — where "Send now" sits, since Claude's send-now hands over the whole queue.
+ */
+export function queuedPrompts(messages: Message[] | null | undefined): { count: number; last: Message | null } {
+  const queued = (Array.isArray(messages) ? messages : []).filter((m) => m.queued === true)
+  return { count: queued.length, last: queued.at(-1) ?? null }
+}
+
+export const sendNowLabel = (count: number) => (count > 1 ? `Send all ${count} now` : 'Send now')

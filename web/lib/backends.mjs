@@ -29,6 +29,31 @@ export function typeChunks(text, max = TYPE_CHUNK) {
   return out;
 }
 
+/** API key names tmux spells differently (the rest are tmux key names already). */
+export const TMUX_KEY_NAMES = { PageUp: 'PPage', PageDown: 'NPage' };
+
+/** What a terminal sends for the keys iTerm's script has no mode of its own for (written raw). */
+export const ITERM_KEY_BYTES = {
+  Left: '\x1b[D',
+  Right: '\x1b[C',
+  Tab: '\t',
+  BTab: '\x1b[Z',
+  Space: ' ',
+  BSpace: '\x7f',
+  Home: '\x1b[H',
+  End: '\x1b[F',
+  PageUp: '\x1b[5~',
+  PageDown: '\x1b[6~',
+};
+
+/**
+ * Claude Code's "send now" chord (Ctrl+X Ctrl+S): hands every queued prompt to Claude at once — a
+ * running shell command moves to the background, a streamed answer stops. Nothing queued and an
+ * empty input: no-op. Text left in the input box goes with the queue.
+ */
+export const TMUX_SEND_NOW = ['C-x', 'C-s'];
+export const ITERM_SEND_NOW_BYTES = '\x18\x13';
+
 export class BackendError extends Error {
   constructor(message, status = 500) {
     super(message);
@@ -195,11 +220,29 @@ export function createBackend({
     const backend = backendOf(session);
     const handle = requireHandle(session);
     if (backend === 'tmux') {
-      await run(tmux, ['send-keys', '-t', handle, key], { timeout: 8000 });
+      await run(tmux, ['send-keys', '-t', handle, TMUX_KEY_NAMES[key] ?? key], { timeout: 8000 });
       return;
     }
-    const mode = { Escape: 'escape', Enter: 'enter', Up: 'up', Down: 'down' }[key] ?? 'enter';
-    await run(osascript, [scriptPath(), mode, handle], { timeout: 15000 });
+    const mode = { Escape: 'escape', Enter: 'enter', Up: 'up', Down: 'down' }[key];
+    if (mode) {
+      await run(osascript, [scriptPath(), mode, handle], { timeout: 15000 });
+      return;
+    }
+    // Never a fallback key: an unknown one pressing Enter would pick whatever a dialog highlights.
+    const bytes = ITERM_KEY_BYTES[key];
+    if (bytes === undefined) throw new BackendError(`key "${key}" cannot be sent to iTerm`, 400);
+    await run(osascript, [scriptPath(), 'type', handle, bytes], { timeout: 15000 });
+  }
+
+  /** Press Claude Code's send-now chord: its queued prompts go to Claude now. */
+  async function sendNow(session) {
+    const backend = backendOf(session);
+    const handle = requireHandle(session);
+    if (backend === 'tmux') {
+      await run(tmux, ['send-keys', '-t', handle, ...TMUX_SEND_NOW], { timeout: 8000 });
+      return;
+    }
+    await run(osascript, [scriptPath(), 'type', handle, ITERM_SEND_NOW_BYTES], { timeout: 15000 });
   }
 
   /** Type `text` without submitting it (no Enter). */
@@ -219,5 +262,5 @@ export function createBackend({
     await run(osascript, [scriptPath(), 'close', handle], { timeout: 15000 });
   }
 
-  return { peek, send, keys, type, closeIterm };
+  return { peek, send, keys, sendNow, type, closeIterm };
 }

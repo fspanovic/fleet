@@ -20,6 +20,11 @@
 //! worktree-aware). Those assignments are marked `fallback` and re-classified by
 //! the model once it's back.
 //!
+//! **Default group.** With a default group set (`State::default_group`, made on the
+//! board), neither the model nor the fallback places anything: every session the user
+//! didn't place goes to the default group (`default` assignment, kept like a `manual`
+//! one), and the model / fallback groups that empties disappear.
+//!
 //! The pass itself ([`run_pass`]) is pure apart from the model call, which is a
 //! parameter, so the tests never spawn `claude`.
 
@@ -89,7 +94,8 @@ pub struct Assignment {
     pub id: String,
     pub group: String,
     pub fingerprint: String,
-    /// `llm`, `fallback` or `manual` (moved on the board: kept whatever the fingerprint).
+    /// `llm`, `fallback`, `manual` (moved on the board: kept whatever the fingerprint) or
+    /// `default` (put in the default group by a pass: kept like `manual`).
     pub source: String,
     #[serde(default)]
     pub assigned_at: i64,
@@ -138,6 +144,10 @@ pub struct State {
     /// `host/id` → assignment.
     #[serde(default)]
     pub assignments: BTreeMap<String, Assignment>,
+    /// The default group's id: every session no group claims goes there (see [`run_pass`]),
+    /// instead of the model's or the repository fallback's pick. `None` = no default.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub default_group: Option<String>,
     #[serde(default)]
     pub last_run: Option<RunSummary>,
 }
@@ -179,6 +189,18 @@ impl State {
 
     fn group(&self, id: &str) -> Option<&Group> {
         self.groups.iter().find(|g| g.id == id)
+    }
+
+    /// The default group's id, when one is set and still exists.
+    pub fn default_group(&self) -> Option<&str> {
+        self.default_group
+            .as_deref()
+            .filter(|id| self.group(id).is_some())
+    }
+
+    /// A group that stays when nobody is in it: the user's own (`manual`) and the default one.
+    fn kept_empty(&self, g: &Group) -> bool {
+        g.source == MANUAL || self.default_group.as_deref() == Some(g.id.as_str())
     }
 
     fn members_of(&self, id: &str) -> Vec<&Assignment> {
@@ -804,6 +826,7 @@ where
     if opts.refresh {
         state.groups.clear();
         state.assignments.clear();
+        state.default_group = None;
         state.last_consolidated_at = Some(now);
     }
     if state.last_consolidated_at.is_none() {
@@ -828,11 +851,16 @@ where
         state.dirty = true;
     }
 
+    if let Some(default) = state.default_group().map(str::to_string) {
+        return default_pass(state, obs, &default, sum, opts);
+    }
+
     // Who needs a group.
     let mut todo: Vec<Item> = Vec::new();
     for it in &obs.items {
         match state.assignments.get(&it.key()) {
-            Some(a) if a.source == MANUAL => sum.kept += 1,
+            // Placed by the user, or by an earlier pass into the default group.
+            Some(a) if a.source == MANUAL || a.source == DEFAULT => sum.kept += 1,
             // Parked by repository while the model was down: reclassified, unless the
             // user has since named that group.
             Some(a)
@@ -1027,16 +1055,82 @@ where
     sum
 }
 
-/// Drop groups nobody is in — except the user's own (`manual`): those stay until deleted.
+/// [`run_pass`] with a default group: no model call, no repository fallback. Every session
+/// the user didn't place (no assignment, or the model's / the fallback's) goes to `default`
+/// as a [`DEFAULT`] assignment — kept from then on like a `manual` one; the model and
+/// fallback groups this empties disappear.
+fn default_pass(
+    state: &mut State,
+    obs: &Observed,
+    default: &str,
+    mut sum: RunSummary,
+    opts: &PassOpts,
+) -> RunSummary {
+    let now = opts.now;
+    let placed = |a: &Assignment| a.source == MANUAL || a.source == DEFAULT;
+    let mut todo: Vec<&Item> = Vec::new();
+    for it in &obs.items {
+        match state.assignments.get(&it.key()) {
+            Some(a) if placed(a) => sum.kept += 1,
+            _ => todo.push(it),
+        }
+    }
+    // Stored ones the pass can't see (dormant, a host that didn't answer) move along too.
+    let live: HashSet<String> = obs.items.iter().map(Item::key).collect();
+    let stale: Vec<String> = state
+        .assignments
+        .iter()
+        .filter(|(k, a)| !placed(a) && !live.contains(*k))
+        .map(|(k, _)| k.clone())
+        .collect();
+    if opts.dry_run {
+        sum.classified = todo.len() + stale.len();
+        sum.mode = "dry-run".into();
+        sum.note = Some(format!(
+            "dry run: {} session(s) to put in the default group, no model call",
+            sum.classified
+        ));
+        return sum;
+    }
+    for it in todo {
+        assign(state, it, default, DEFAULT, now);
+        sum.classified += 1;
+    }
+    for k in stale {
+        if let Some(a) = state.assignments.get_mut(&k) {
+            a.group = default.to_string();
+            a.source = DEFAULT.into();
+            a.assigned_at = now;
+            sum.classified += 1;
+            state.dirty = true;
+        }
+    }
+    drop_empty(state);
+    sum.mode = if sum.classified > 0 {
+        "default"
+    } else {
+        "noop"
+    }
+    .into();
+    state.updated_at = Some(now);
+    sum
+}
+
+/// Drop groups nobody is in — except the user's own (`manual`) and the default one: those stay
+/// until deleted.
 fn drop_empty(state: &mut State) {
     let used: HashSet<String> = state
         .assignments
         .values()
         .map(|a| a.group.clone())
         .collect();
-    state
+    let keep: HashSet<String> = state
         .groups
-        .retain(|g| g.source == MANUAL || used.contains(&g.id));
+        .iter()
+        .filter(|g| state.kept_empty(g) || used.contains(&g.id))
+        .map(|g| g.id.clone())
+        .collect();
+    state.groups.retain(|g| keep.contains(&g.id));
 }
 
 fn apply_consolidation(state: &mut State, c: &Consolidation, sum: &mut RunSummary) {
@@ -1082,9 +1176,10 @@ fn apply_consolidation(state: &mut State, c: &Consolidation, sum: &mut RunSummar
     }
 }
 
-/// A group the user shaped: renamed, or holding a session they moved there.
+/// A group the user shaped: renamed, made the default, or holding a session they moved there.
 fn pinned(state: &State, id: &str) -> bool {
     state.group(id).is_some_and(|g| g.locked)
+        || state.default_group.as_deref() == Some(id)
         || state
             .assignments
             .values()
@@ -1095,6 +1190,10 @@ fn pinned(state: &State, id: &str) -> bool {
 
 /// Source of a group or assignment the user made on the board.
 pub const MANUAL: &str = "manual";
+
+/// Source of an assignment the pass made into the default group: never reclassified by the
+/// model (like `manual`), whatever changes about the session or the default later.
+pub const DEFAULT: &str = "default";
 
 /// Characters of a user-written group label.
 pub const MAX_USER_LABEL: usize = 48;
@@ -1175,6 +1274,34 @@ pub fn delete_group(state: &mut State, id: &str, now: i64) -> std::result::Resul
         ));
     }
     state.groups.retain(|g| g.id != id);
+    if state.default_group.as_deref() == Some(id) {
+        state.default_group = None;
+    }
+    state.updated_at = Some(now);
+    Ok(())
+}
+
+/// Make group `id` the default one (`None`: no default). New sessions go there at the next
+/// pass (see [`run_pass`]); the group is the user's from then on (`locked`: consolidation
+/// never renames it nor merges it away) and stays when empty.
+pub fn set_default_group(
+    state: &mut State,
+    id: Option<&str>,
+    now: i64,
+) -> std::result::Result<(), String> {
+    match id {
+        Some(id) => {
+            let g = state
+                .groups
+                .iter_mut()
+                .find(|g| g.id == id)
+                .ok_or_else(|| format!("no group {id}"))?;
+            g.locked = true;
+            state.default_group = Some(id.to_string());
+        }
+        None => state.default_group = None,
+    }
+    state.dirty = true;
     state.updated_at = Some(now);
     Ok(())
 }
@@ -1284,6 +1411,8 @@ pub struct Report {
     pub groups: Vec<GroupView>,
     /// Live sessions with no group (only with a dry run or an empty state).
     pub ungrouped: Vec<Member>,
+    /// The default group's id (new sessions go there), `null` when none.
+    pub default_group: Option<String>,
     /// host → `ok` or why it didn't answer.
     pub hosts: BTreeMap<String, String>,
 }
@@ -1320,7 +1449,9 @@ pub fn view(state: &State, obs: Option<&Observed>) -> (Vec<GroupView>, Vec<Membe
                 members,
             }
         })
-        .filter(|g| !g.members.is_empty() || g.source == MANUAL)
+        .filter(|g| {
+            !g.members.is_empty() || g.source == MANUAL || state.default_group() == Some(&g.id)
+        })
         .collect();
     groups.sort_by(|a, b| {
         b.members
@@ -2210,5 +2341,129 @@ mod tests {
         delete_group(&mut state, &g, NOW).unwrap();
         assert!(state.group(&g).is_none());
         assert!(delete_group(&mut state, &g, NOW).is_err());
+    }
+
+    #[test]
+    fn with_a_default_group_new_sessions_go_there_without_the_model() {
+        let mut state = State::default();
+        let off = PassOpts {
+            allow_llm: false,
+            ..opts()
+        };
+        // A repository fallback group, a manual placement, and the default group.
+        run_pass(&mut state, &obs(fleet_items()), &off, |_| panic!());
+        let paused = create_group(&mut state, "Paused", NOW).unwrap();
+        move_session(
+            &mut state,
+            "laptop",
+            "a1",
+            &MoveTo::Group(paused.clone()),
+            NOW,
+        )
+        .unwrap();
+        let inbox = create_group(&mut state, "In Progress", NOW).unwrap();
+        assert!(set_default_group(&mut state, Some("g-nope"), NOW).is_err());
+        set_default_group(&mut state, Some(&inbox), NOW).unwrap();
+        let fallback: Vec<String> = state
+            .groups
+            .iter()
+            .filter(|g| g.source == "fallback")
+            .map(|g| g.id.clone())
+            .collect();
+        assert!(!fallback.is_empty());
+
+        let mut items = fleet_items();
+        items.push(item(
+            "laptop",
+            "a9",
+            "fresh",
+            "~/Code/other",
+            "something new",
+        ));
+        let sum = run_pass(&mut state, &obs(items.clone()), &opts(), |_| {
+            panic!("no model call")
+        });
+        assert_eq!(sum.model_calls, 0);
+        assert_eq!(sum.mode, "default");
+        // The new session and the fallback-placed ones are in the default group…
+        for k in ["laptop/a9", "laptop/a2", "workstation/b1"] {
+            let a = &state.assignments[k];
+            assert_eq!(
+                (a.group.as_str(), a.source.as_str()),
+                (inbox.as_str(), DEFAULT),
+                "{k}"
+            );
+        }
+        // …the manual one is untouched, and the emptied fallback groups are gone.
+        assert_eq!(state.assignments["laptop/a1"].group, paused);
+        assert!(fallback.iter().all(|g| state.group(g).is_none()));
+        let (groups, ungrouped) = view(&state, Some(&obs(items.clone())));
+        assert!(ungrouped.is_empty());
+        assert_eq!(groups.len(), 2);
+
+        // A second pass changes nothing; with the default unset, the model never
+        // reclassifies what the default pass placed, even once the session changed.
+        let sum = run_pass(&mut state, &obs(items.clone()), &opts(), |_| panic!());
+        assert_eq!((sum.mode.as_str(), sum.classified), ("noop", 0));
+        set_default_group(&mut state, None, NOW).unwrap();
+        items[1].title = Some("now about something else".into());
+        let sum = run_pass(&mut state, &obs(items), &opts(), |_| panic!());
+        assert_eq!(sum.model_calls, 0);
+        assert_eq!(state.assignments["laptop/a2"].group, inbox);
+    }
+
+    #[test]
+    fn without_a_default_group_new_sessions_are_classified_as_before() {
+        let mut state = State::default();
+        create_group(&mut state, "Paused", NOW).unwrap();
+        let sum = run_pass(&mut state, &obs(fleet_items()), &opts(), |_| {
+            Ok(ANSWER.into())
+        });
+        assert_eq!(sum.model_calls, 1);
+        assert_eq!(state.default_group(), None);
+        assert_eq!(state.assignments["laptop/a1"].source, "llm");
+    }
+
+    #[test]
+    fn deleting_the_default_group_clears_the_default_and_renaming_keeps_it() {
+        let mut state = State::default();
+        let g = create_group(&mut state, "Inbox", NOW).unwrap();
+        set_default_group(&mut state, Some(&g), NOW).unwrap();
+        rename_group(&mut state, &g, "In Progress", NOW).unwrap();
+        assert_eq!(state.default_group(), Some(g.as_str()));
+        delete_group(&mut state, &g, NOW).unwrap();
+        assert_eq!(state.default_group, None);
+        // A dangling id (an older state) counts as no default.
+        state.default_group = Some("g-gone".into());
+        assert_eq!(state.default_group(), None);
+    }
+
+    #[test]
+    fn a_model_group_made_default_stays_when_empty_and_is_never_merged_away() {
+        let mut state = State::default();
+        run_pass(&mut state, &obs(fleet_items()), &opts(), |_| {
+            Ok(ANSWER.into())
+        });
+        let reviews = gid(&state, "Team Reviews");
+        set_default_group(&mut state, Some(&reviews), NOW).unwrap();
+        assert!(state.group(&reviews).unwrap().locked);
+        let board = gid(&state, "Fleet Board");
+        move_session(&mut state, "workstation", "b1", &MoveTo::Group(board), NOW).unwrap();
+        assert!(state.group(&reviews).is_some());
+        let (groups, _) = view(&state, None);
+        assert!(
+            groups
+                .iter()
+                .any(|v| v.id == reviews && v.members.is_empty())
+        );
+        let path = tempfile::tempdir().unwrap();
+        let p = path.path().join("groups.json");
+        state.save_to(&p).unwrap();
+        assert!(
+            std::fs::read_to_string(&p)
+                .unwrap()
+                .contains("\"defaultGroup\"")
+        );
+        assert_eq!(State::load_from(&p), state);
     }
 }

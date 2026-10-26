@@ -50,12 +50,12 @@ export function NoteResults({ host, data, loading, error, selected, onPick, comp
   }
   return (
     <div className={cn('transition-opacity', loading && 'opacity-60')}>
-      <p className="flex items-center gap-1.5 px-4 pt-2 pb-1 text-[0.6875rem] text-dimmer tabular-nums">
+      <p className="flex items-center gap-1.5 px-4 pt-2 pb-1 text-2xs text-dimmer tabular-nums">
         {loading ? <Loader2Icon className="size-3 animate-spin" /> : null}
         {data.total === 0 ? 'No matches' : `${data.total} ${data.total === 1 ? 'note' : 'notes'}${data.total > data.results.length ? ` · top ${data.results.length}` : ''}`}
         <span className="ml-auto">{data.engine === 'command' ? 'search command' : 'full text'} · {data.ms} ms</span>
       </p>
-      {data.fallback ? <p className="px-4 pb-1 text-[0.6875rem] text-status-waiting">{data.fallback} — built-in search used</p> : null}
+      {data.fallback ? <p className="px-4 pb-1 text-2xs text-status-waiting">{data.fallback} — built-in search used</p> : null}
       <ul className="px-1.5 pb-2">
         {data.results.map((r) => {
           const active = r.path === selected
@@ -71,19 +71,19 @@ export function NoteResults({ host, data, loading, error, selected, onPick, comp
                 )}
               >
                 <span className="flex min-w-0 items-baseline gap-2">
-                  <span className={cn('min-w-0 flex-1 truncate font-medium', compact ? 'text-[0.8125rem]' : 'text-[0.9375rem]')}>{r.title}</span>
-                  <span className="shrink-0 text-[0.6875rem] text-dimmer tabular-nums">{relTime(r.mtime)}</span>
+                  <span className={cn('min-w-0 flex-1 truncate font-medium', compact ? 'text-body-sm' : 'text-md')}>{r.title}</span>
+                  <span className="shrink-0 text-2xs text-dimmer tabular-nums">{relTime(r.mtime)}</span>
                 </span>
-                {folder(r.path) ? <span className="block truncate font-mono text-[0.6875rem] text-dimmer">{folder(r.path)}/</span> : null}
+                {folder(r.path) ? <span className="block truncate font-mono text-2xs text-dimmer">{folder(r.path)}/</span> : null}
                 {r.matches.map((m, i) => (
                   <span key={i} className="mt-0.5 flex gap-1.5 text-xs leading-snug text-muted-foreground">
-                    {m.line ? <span className="w-6 shrink-0 text-right font-mono text-[0.625rem] leading-[1.35rem] text-dimmer tabular-nums">{m.line}</span> : null}
+                    {m.line ? <span className="w-6 shrink-0 text-right font-mono text-3xs leading-[1.35rem] text-dimmer tabular-nums">{m.line}</span> : null}
                     <span className="min-w-0 break-words [overflow-wrap:anywhere]">
                       <Marked text={m.text} ranges={m.ranges} />
                     </span>
                   </span>
                 ))}
-                {r.more ? <span className="mt-0.5 block pl-7.5 text-[0.6875rem] text-dimmer">+{r.more} more</span> : null}
+                {r.more ? <span className="mt-0.5 block pl-7.5 text-2xs text-dimmer">+{r.more} more</span> : null}
               </a>
             </li>
           )
@@ -98,7 +98,7 @@ export function RecentNotes({ host, notes, selected, compact = false }: { host: 
   if (!notes.length) return null
   return (
     <section aria-label="Recently changed">
-      <h2 className="px-4 pt-3 pb-1 text-[0.6875rem] font-semibold tracking-wider text-dimmer uppercase">Recently changed</h2>
+      <h2 className="px-4 pt-3 pb-1 text-2xs font-semibold tracking-wider text-dimmer uppercase">Recently changed</h2>
       <ul className="px-1.5 pb-2">
         {notes.map((n) => (
           <li key={n.path}>
@@ -106,16 +106,16 @@ export function RecentNotes({ host, notes, selected, compact = false }: { host: 
               href={`#${notesHref(host, n.path)}`}
               className={cn(
                 'flex min-w-0 items-center gap-2 rounded-lg px-2.5 outline-none focus-visible:ring-2 focus-visible:ring-ring/50',
-                compact ? 'py-1.5 text-[0.8125rem]' : 'min-h-11 py-2 text-[0.9375rem]',
+                compact ? 'py-1.5 text-body-sm' : 'min-h-11 py-2 text-md',
                 n.path === selected ? 'bg-primary/12' : 'hover:bg-muted/60',
               )}
             >
               <FileTextIcon className="size-4 shrink-0 text-dimmer" />
               <span className="min-w-0 flex-1">
                 <span className="block truncate">{n.title ?? n.path}</span>
-                {folder(n.path) ? <span className="block truncate font-mono text-[0.6875rem] text-dimmer">{folder(n.path)}/</span> : null}
+                {folder(n.path) ? <span className="block truncate font-mono text-2xs text-dimmer">{folder(n.path)}/</span> : null}
               </span>
-              <span className="shrink-0 text-[0.6875rem] text-dimmer tabular-nums">{relTime(n.mtime)}</span>
+              <span className="shrink-0 text-2xs text-dimmer tabular-nums">{relTime(n.mtime)}</span>
             </a>
           </li>
         ))}

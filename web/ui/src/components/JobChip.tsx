@@ -3,6 +3,7 @@ import { CalendarClockIcon } from 'lucide-react'
 import type { Session } from '@/api/types'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import type { StatusFilter } from '@/lib/sessions'
+import { CHIP, CHIP_QUIET } from '@/lib/styles'
 import { cn } from '@/lib/utils'
 
 /**
@@ -18,7 +19,9 @@ export function JobChip({ session: s, className }: { session: Pick<Session, 'ori
         <span
           aria-label={`Started by job ${o.job}, run ${o.run}`}
           className={cn(
-            'inline-flex h-4.5 max-w-[40%] min-w-0 shrink items-center gap-1 rounded-[5px] border border-border px-1 text-[0.6875rem] text-muted-foreground',
+            CHIP,
+            CHIP_QUIET,
+            'max-w-[40%] min-w-0 shrink font-normal',
             className,
           )}
         >

@@ -8,7 +8,7 @@ use colored::Colorize;
 use serde_json::{Value, json};
 
 use crate::cli::commands::{clean_model, with_model};
-use crate::cli::render::{ago, home_rel};
+use crate::cli::render::{ago, home_rel, status_text};
 use crate::cli::web::{self, ServiceOpts};
 use crate::core::backend::{self, Prompt};
 use crate::core::config;
@@ -242,7 +242,7 @@ pub fn show(name: &str, json_out: bool) -> Result<()> {
                 .filter(|x| x.tmux_session.as_deref() == Some(sess.tmux_session.as_str()))
                 .collect();
             let state = match (live.first(), sess.closed_at) {
-                (Some(x), _) => x.status.clone(),
+                (Some(x), _) => status_text(&x.status).to_string(),
                 (None, Some(_)) => "closed".into(),
                 (None, None) => "gone".into(),
             };
@@ -504,6 +504,15 @@ pub fn tick(quiet: bool) -> Result<()> {
     Ok(())
 }
 
+/// Idle and quiet for [`QUIET_BEFORE_CLOSE_MS`]: a job session `keep` may close. Plain `idle`
+/// only: a `shell` session (idle with a background task — a Monitor, a background Bash — still
+/// running) is live work, and killing its tmux session kills the task.
+fn quiet_idle(x: &Session, now_ms: i64) -> bool {
+    x.status == "idle"
+        && x.updated_at
+            .is_none_or(|u| now_ms - u > QUIET_BEFORE_CLOSE_MS)
+}
+
 /// Close the sessions of `j`'s runs that are past `keep`, idle and quiet; mark the ones that
 /// are already gone.
 fn cleanup(
@@ -540,12 +549,8 @@ fn cleanup(
                 .iter()
                 .filter(|x| x.tmux_session.as_deref() == Some(s.tmux_session.as_str()))
                 .collect();
-            // Idle and quiet, or the agent already exited and left a shell behind.
-            let closable = agents.iter().all(|x| {
-                x.status == "idle"
-                    && x.updated_at
-                        .is_none_or(|u| now_ms - u > QUIET_BEFORE_CLOSE_MS)
-            });
+            // Every agent closable, or the agent already exited and left a shell behind.
+            let closable = agents.iter().all(|x| quiet_idle(x, now_ms));
             if !closable {
                 continue;
             }
@@ -668,6 +673,31 @@ mod tests {
         );
         assert_eq!(strip_frontmatter("Do it.\n---\nmore"), "Do it.\n---\nmore");
         assert_eq!(strip_frontmatter("---\nunterminated"), "---\nunterminated");
+    }
+
+    // `keep` closes idle, quiet sessions — never one with a background task running
+    // (`shell`): killing its tmux session would kill the task.
+    #[test]
+    fn keep_closes_only_quiet_plain_idle_sessions() {
+        let now = 10 * QUIET_BEFORE_CLOSE_MS;
+        let old = Some(now - QUIET_BEFORE_CLOSE_MS - 1);
+        let s = |status: &str, updated_at| Session {
+            status: status.into(),
+            updated_at,
+            ..Default::default()
+        };
+        assert!(quiet_idle(&s("idle", old), now));
+        assert!(quiet_idle(&s("idle", None), now));
+        assert!(
+            !quiet_idle(&s("idle", Some(now - 1000)), now),
+            "not quiet yet"
+        );
+        assert!(
+            !quiet_idle(&s("shell", old), now),
+            "background task running"
+        );
+        assert!(!quiet_idle(&s("busy", old), now));
+        assert!(!quiet_idle(&s("waiting", old), now));
     }
 
     #[test]

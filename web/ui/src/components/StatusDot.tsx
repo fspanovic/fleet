@@ -1,5 +1,5 @@
 import { statusMeta } from '@/lib/sessions'
-import { STATUS_DOT } from '@/lib/styles'
+import { STATUS_DOT, STATUS_DOT_BACKGROUND, STATUS_DOT_MOTION } from '@/lib/styles'
 import { cn } from '@/lib/utils'
 
 export function StatusDot({ status, className }: { status: string | null | undefined; className?: string }) {
@@ -8,7 +8,8 @@ export function StatusDot({ status, className }: { status: string | null | undef
     <span
       role="img"
       aria-label={meta.label}
-      className={cn('inline-block size-2.5 shrink-0 rounded-full', STATUS_DOT[meta.key], className)}
+      data-status={meta.key}
+      className={cn('inline-block size-2.5 shrink-0 rounded-full', STATUS_DOT_MOTION, STATUS_DOT[meta.key], meta.background && STATUS_DOT_BACKGROUND, className)}
     />
   )
 }

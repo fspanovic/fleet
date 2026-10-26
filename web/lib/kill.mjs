@@ -1,6 +1,7 @@
 // Close a session for good: terminate the Claude process, then tear down the terminal
 // that hosted it (the tmux window, and the tmux session when that was its only window,
-// or the iTerm tab).
+// or the iTerm tab). `restart` ends it the same way but keeps the pane and types a resume
+// line into it (the web UI's "Restart in bypass").
 //
 // This lives in the web backend layer (next to lib/backends.mjs), not in the `fleet` CLI:
 // it needs nothing discovery doesn't already hand us (pid, backend, handle, tmux_session),
@@ -118,5 +119,69 @@ export function createKiller({ run, tmux = 'tmux', killProcess = process.kill.bi
     return { process: processResult, terminal };
   }
 
-  return { kill, terminate };
+  const SHELLS = new Set(['zsh', 'bash', 'sh', 'fish', 'dash', 'ksh', 'tcsh', 'csh', 'nu']);
+
+  /** The pane's foreground command (`zsh`, `claude`, a version like `2.1.306`…), or null when the pane is gone. */
+  async function paneCommand(pane) {
+    try {
+      const { stdout } = await run(tmux, ['display-message', '-p', '-t', pane, '#{pane_current_command}'], { timeout: 5000 });
+      return String(stdout).trim().replace(/^-/, '');
+    } catch {
+      return null;
+    }
+  }
+
+  /**
+   * Restart in place: end the agent like `kill` does, but keep its terminal, and once the pane is
+   * back at its shell type `line` (a `claude --resume …` line) + Enter into that same pane. tmux
+   * only. Claude as the pane's own process (not typed into a shell) is refused up front (409):
+   * the pane would close with it. Should the pane still vanish, a 502 says so.
+   * @returns {{ process, terminal: 'left', pane }}
+   */
+  async function restart(session, line, { shellWaitMs = 8000 } = {}) {
+    if (String(session.backend) !== 'tmux' || !session.handle) {
+      throw Object.assign(new Error('only a session in a tmux pane can be restarted in place'), { status: 409 });
+    }
+    const pane = session.handle;
+    let panePid = null;
+    try {
+      ({ stdout: panePid } = await run(tmux, ['display-message', '-p', '-t', pane, '#{pane_pid}'], { timeout: 5000 }));
+    } catch {
+      throw Object.assign(new Error('the tmux pane is gone'), { status: 409 });
+    }
+    // Claude as the pane's own process: the pane would close with it. Refused before anything is ended.
+    if (Number(String(panePid).trim()) === Number(session.pid)) {
+      throw Object.assign(new Error('Claude is this pane\'s own command (no shell under it): the pane would close with it — nothing ended'), { status: 409 });
+    }
+    const processResult = await terminate(Number(session.pid));
+    let current = null;
+    for (let waited = 0; ; waited += 200) {
+      current = await paneCommand(pane);
+      if (current === null || SHELLS.has(current) || waited >= shellWaitMs) break;
+      await wait(200);
+    }
+    if (current === null) {
+      throw Object.assign(new Error('the pane closed with Claude (it was the pane\'s own command), so there is nothing to resume in — bring it back from Recently closed'), { status: 502, process: processResult });
+    }
+    if (!SHELLS.has(current)) {
+      throw Object.assign(new Error(`the pane did not return to a shell (it runs ${current}) — nothing typed`), { status: 502, process: processResult });
+    }
+    await run(tmux, ['send-keys', '-t', pane, '-l', '--', line], { timeout: 8000 });
+    await wait(150);
+    await run(tmux, ['send-keys', '-t', pane, 'Enter'], { timeout: 8000 });
+    return { process: processResult, terminal: 'left', pane };
+  }
+
+  /** The process's command line (`ps -o args=`), for the flags a restart keeps; '' when unknown. */
+  async function processArgs(pid) {
+    if (!Number.isInteger(Number(pid)) || Number(pid) <= 1) return '';
+    try {
+      const { stdout } = await run('ps', ['-o', 'args=', '-p', String(Number(pid))], { timeout: 5000 });
+      return String(stdout).trim();
+    } catch {
+      return '';
+    }
+  }
+
+  return { kill, terminate, restart, processArgs };
 }

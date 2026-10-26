@@ -1,7 +1,7 @@
 // The one place the web server talks to the `fleet` CLI. Everything the server needs
 // from the CLI goes through here, so an alternative UI/TUI server can reuse it and the
 // contracts (`fleet list --json`, `fleet rename --json`, `fleet name --all --apply`, `fleet name <id> --apply`, `fleet group` (+ `--rename` / `--move`),
-// `fleet usage --json`, `fleet --local prs --json`, `fleet --local pr checkout --json`, `fleet config set`, `fleet --local repos …`, `fleet --local jobs …`, `fleet --local stack … --json`, `fleet --local restore … --json`) are documented in one
+// `fleet usage --json`, `fleet --local prs --json`, `fleet --local pr checkout --json`, `fleet --local workspace new|name --json`, `fleet config set`, `fleet --local repos …`, `fleet --local jobs …`, `fleet --local stack … --json`, `fleet --local restore … --json`) are documented in one
 // spot (see ARCHITECTURE.md).
 //
 // Peek/send/keys are NOT done through the CLI: `fleet peek` truncates to terminal width
@@ -66,20 +66,6 @@ export function createFleetCli({ run, bin = 'fleet', timeoutMs = 8000 } = {}) {
       if (killed) throw new FleetCliError(`fleet name timed out after ${Math.round(t / 1000)}s`, { timedOut: true });
       if (err?.code === 'ENOENT') throw new FleetCliError(`fleet binary not found (${bin})`);
       throw new FleetCliError(String(err?.message ?? err));
-    }
-  }
-
-  /**
-   * Name one session: `fleet name <target> --apply` — the same generator and rename path as
-   * `nameAll`, for a session just spawned (lib/autoname.mjs#createSpawnNamer). Output as
-   * `nameAll`. Throws FleetCliError.
-   */
-  async function nameOne({ target, timeoutMs: t = 120 * 1000 } = {}) {
-    try {
-      const { stdout, stderr } = await run(bin, ['name', String(target), '--apply'], { timeout: t, env: { ...process.env, NO_COLOR: '1' } });
-      return { stdout: stdout ?? '', stderr: stderr ?? '' };
-    } catch (err) {
-      throw wrap(err, 'fleet name', t);
     }
   }
 
@@ -161,7 +147,8 @@ export function createFleetCli({ run, bin = 'fleet', timeoutMs = 8000 } = {}) {
   /**
    * A change made on the board: `fleet group --rename <id> --label <l> --json`,
    * `fleet group --move <host/id> (--to <group id> | --label <new group>) --json`,
-   * `fleet group --create --label <l> --json` or `fleet group --delete <id> --json`. Edits the
+   * `fleet group --create --label <l> --json`, `fleet group --delete <id> --json` or
+   * `fleet group (--set-default <id> | --clear-default) --json`. Edits the
    * stored groups only (no discovery, no model call); resolves the report like `--cached`.
    */
   async function groupEdit({ op, id, label, host, session, to, timeoutMs: t = 10 * 1000 } = {}) {
@@ -171,6 +158,7 @@ export function createFleetCli({ run, bin = 'fleet', timeoutMs = 8000 } = {}) {
     else if (op === 'move') args.push(`--move=${host}/${session}`, to ? `--to=${to}` : `--label=${label}`);
     else if (op === 'create') args.push('--create', `--label=${label}`);
     else if (op === 'delete') args.push(`--delete=${id}`);
+    else if (op === 'default') args.push(id ? `--set-default=${id}` : '--clear-default');
     else throw new FleetCliError(`unknown group edit "${op}"`);
     args.push('--json');
     let stdout;
@@ -238,6 +226,56 @@ export function createFleetCli({ run, bin = 'fleet', timeoutMs = 8000 } = {}) {
    */
   async function prCheckout(ref, { timeoutMs: t = 4 * 60 * 1000 } = {}) {
     return prCommand('checkout', ref, t);
+  }
+
+  /**
+   * Make a workspace (a new worktree of `dir`'s repo on a new branch off the remote's default
+   * branch): `fleet --local workspace new --dir <dir> [--handle <h>] --json` → its record
+   * (`{ handle, path, repo, remote, base, prefix, createdBranch, branch, createdAt, slug, title, named }`).
+   * Throws FleetCliError (message: the CLI's last error line; `missing` when the CLI predates it).
+   */
+  async function workspaceNew({ dir, handle = null, timeoutMs: t = 4 * 60 * 1000 } = {}) {
+    const args = ['--local', 'workspace', 'new', '--dir', String(dir), '--json'];
+    if (handle) args.push('--handle', String(handle));
+    let stdout;
+    try {
+      ({ stdout } = await run(bin, args, { timeout: t, env: { ...process.env, NO_COLOR: '1' } }));
+    } catch (err) {
+      throw cliError(err, 'fleet workspace new', t, 'workspace');
+    }
+    return parseObject(stdout, 'fleet workspace new');
+  }
+
+  /**
+   * Name a workspace session after its work: `fleet --local workspace name <target> --json` —
+   * the branch rename (guarded) and the title. Resolves the report
+   * (`{ ok, result: named|kept|held|no-prompt|already-named, handle, slug, title, branch, message }`);
+   * `held` / `no-prompt` (exit 3) resolve too, with `ok: false`. Throws FleetCliError otherwise.
+   */
+  async function workspaceName({ target, timeoutMs: t = 2 * 60 * 1000 } = {}) {
+    let stdout;
+    try {
+      ({ stdout } = await run(bin, ['--local', 'workspace', 'name', String(target), '--json'], { timeout: t, env: { ...process.env, NO_COLOR: '1' } }));
+    } catch (err) {
+      const report = tryObject(err?.stdout);
+      if (report && (report.result === 'held' || report.result === 'no-prompt')) return report;
+      throw cliError(err, 'fleet workspace name', t, 'workspace');
+    }
+    return parseObject(stdout, 'fleet workspace name');
+  }
+
+  /** A FleetCliError carrying the CLI's own last error line, `missing` when it lacks `sub`. */
+  function cliError(err, what, t, sub) {
+    const e = wrap(err, what, t);
+    const why = String(err?.stderr ?? '')
+      .split('\n')
+      .filter((l) => l.trim() && !l.startsWith('warning:'))
+      .pop()
+      ?.replace(/^(fleet:\s*)?(Error:\s*)?/i, '')
+      .trim();
+    if (why && !e.timedOut) e.message = why;
+    e.missing = !e.timedOut && new RegExp(`unrecognized subcommand '${sub}'`, 'i').test(String(err?.stderr ?? ''));
+    return e;
   }
 
   /** Mark a PR's @mentions of you seen: `fleet --local pr seen <ref> --json` → `{ pr, seenAt, applied }`. */
@@ -472,7 +510,6 @@ export function createFleetCli({ run, bin = 'fleet', timeoutMs = 8000 } = {}) {
     bin,
     list,
     nameAll,
-    nameOne,
     rename,
     groupRun,
     groupCached,
@@ -482,6 +519,8 @@ export function createFleetCli({ run, bin = 'fleet', timeoutMs = 8000 } = {}) {
     prs,
     prCheckout,
     prSeen,
+    workspaceNew,
+    workspaceName,
     configSet,
     repos,
     reposSync,

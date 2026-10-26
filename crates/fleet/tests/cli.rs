@@ -254,6 +254,43 @@ fn fixture_mode_replaces_discovery() {
     assert_eq!(v[0]["display_title"], "cache-warmup-scheduler");
 }
 
+// `subagents` is always an array on `list --json`: the running ones, else `[]`.
+#[test]
+fn list_json_carries_running_subagents() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("fleet.json");
+    std::fs::write(
+        &path,
+        r#"[{"pid":42,"session_id":"fixture-1","cwd":"/tmp","status":"busy",
+             "subagents":[{"id":"a1","description":"Fix the login bug","agent_type":"general-purpose",
+                           "model":"opus","background":true,"started_at":1700000000000,
+                           "last_active_at":1700000060000,"depth":1,"parent_agent_id":null}]},
+            {"pid":43,"session_id":"fixture-2","cwd":"/tmp","status":"idle"}]"#,
+    )
+    .unwrap();
+    let out = fleet()
+        .args(["list", "--json"])
+        .env("FLEET_FIXTURE", &path)
+        .output()
+        .unwrap();
+    assert!(out.status.success());
+    let v: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
+    let row = |sid: &str| {
+        v.as_array()
+            .unwrap()
+            .iter()
+            .find(|r| r["session_id"] == sid)
+            .unwrap()
+            .clone()
+    };
+    let busy = row("fixture-1");
+    assert_eq!(busy["subagents"][0]["description"], "Fix the login bug");
+    assert_eq!(busy["subagents"][0]["agent_type"], "general-purpose");
+    assert_eq!(busy["subagents"][0]["background"], true);
+    assert_eq!(busy["subagents"][0]["started_at"], 1700000000000_i64);
+    assert_eq!(row("fixture-2")["subagents"], serde_json::json!([]));
+}
+
 // A derived Claude name never becomes the display title while something better
 // is known — and `rename --json` in fixture mode reports without typing.
 #[test]
@@ -540,4 +577,80 @@ fn group_keeps_dormant_sessions() {
     assert_eq!(a2["dormant"], true);
     let a1 = members.iter().find(|m| m["id"] == "a1").unwrap();
     assert!(a1.get("dormant").is_none());
+}
+
+// `fleet group --set-default`: the next pass puts every session the user didn't place in the
+// default group (no repository groups), `--delete` of it clears the default.
+#[test]
+fn group_default_takes_new_sessions_and_clears_on_delete() {
+    let env = common::Env::new();
+    env.write_config(&serde_json::json!({
+        "version": 1, "self": "laptop", "grouping": { "enabled": false }
+    }));
+    let state = env.path("state/groups.json");
+    let input = env.path("sessions.json");
+    std::fs::write(
+        &input,
+        serde_json::json!({ "hosts": [{ "name": "laptop", "ok": true, "sessions": [
+            { "session_id": "a1", "name": "board", "cwd": "~/Code/project" },
+            { "session_id": "a2", "name": "notes", "cwd": "~/Code/notes" }
+        ]}]})
+        .to_string(),
+    )
+    .unwrap();
+    let group = |args: &[&str]| {
+        let out = env
+            .cmd()
+            .env("FLEET_GROUPS_STATE", &state)
+            .arg("group")
+            .args(args)
+            .arg("--json")
+            .output()
+            .unwrap();
+        assert!(
+            out.status.success(),
+            "{}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        serde_json::from_slice::<serde_json::Value>(&out.stdout).expect("json")
+    };
+    let inp = input.to_str().unwrap();
+
+    let v = group(&["--input", inp, "--apply"]);
+    assert_eq!(v["groups"].as_array().unwrap().len(), 2, "by repository");
+    assert_eq!(v["defaultGroup"], serde_json::Value::Null);
+    let v = group(&["--create", "--label", "In Progress"]);
+    let id = v["groups"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|g| g["label"] == "In Progress")
+        .unwrap()["id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    let v = group(&["--set-default", &id]);
+    assert_eq!(v["defaultGroup"], id.as_str());
+
+    let v = group(&["--input", inp, "--apply"]);
+    assert_eq!(v["lastRun"]["mode"], "default");
+    let groups = v["groups"].as_array().unwrap();
+    assert_eq!(groups.len(), 1, "the repository groups are gone: {v}");
+    assert_eq!(groups[0]["id"], id.as_str());
+    assert_eq!(groups[0]["members"].as_array().unwrap().len(), 2);
+
+    let v = group(&["--clear-default"]);
+    assert_eq!(v["defaultGroup"], serde_json::Value::Null);
+    group(&["--set-default", &id]);
+    group(&["--move", "laptop/a1", "--label", "Elsewhere"]);
+    group(&["--move", "laptop/a2", "--label", "Elsewhere"]);
+    let v = group(&["--delete", &id]);
+    assert_eq!(v["defaultGroup"], serde_json::Value::Null);
+    let out = env
+        .cmd()
+        .env("FLEET_GROUPS_STATE", &state)
+        .args(["group", "--set-default", "g-nope"])
+        .output()
+        .unwrap();
+    assert!(!out.status.success());
 }

@@ -4,7 +4,7 @@ import { PlusIcon, SearchIcon, XIcon } from 'lucide-react'
 import type { Session } from '@/api/types'
 import { BoardColumns } from '@/components/board/BoardColumns'
 import { DormantSection } from '@/components/DormantSection'
-import { GroupsStatus } from '@/components/board/GroupsStatus'
+import { BoardMeta } from '@/components/board/GroupsStatus'
 import { ModuleButtons } from '@/components/ModuleNav'
 import { HostDot } from '@/components/HostBadge'
 import { StatusFilterLabel } from '@/components/JobChip'
@@ -16,17 +16,15 @@ import { Kbd } from '@/components/ui/kbd'
 import { Skeleton } from '@/components/ui/skeleton'
 import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group'
 import { ViewToggle } from '@/components/ViewToggle'
-import type { GroupsState } from '@/hooks/useGroups'
+import type { GroupsState, MoveCard } from '@/hooks/useGroups'
 import { ALL_HOSTS, type SessionListState } from '@/hooks/useSessionList'
 import type { BoardColumn, ViewMode } from '@/lib/groups'
 import { allSessions, visibleStatusFilters, type StatusFilterId } from '@/lib/sessions'
 import { ariaShortcut, sessionKey, shortcutHint, withHint } from '@/lib/shortcuts'
+import { FILTER_SEGMENT, SEGMENTED, TOOLBAR } from '@/lib/styles'
 import { cn } from '@/lib/utils'
 
-const chip = cn(
-  'h-7 shrink-0 gap-1 rounded-full border border-border bg-card px-2.5 text-xs text-muted-foreground',
-  'data-[state=on]:border-primary/50 data-[state=on]:bg-accent data-[state=on]:text-accent-foreground',
-)
+const chip = cn('h-7 px-3 text-xs', FILTER_SEGMENT)
 
 export interface BoardProps {
   list: SessionListState
@@ -34,6 +32,8 @@ export interface BoardProps {
   columns: BoardColumn[]
   /** Reorder: column `id` just before `before` (null: to the end) — a header drag. */
   onMoveColumn: (id: string, before: string | null) => void
+  /** Place a card in a column (a card drag): useBoardColumns' moveCard. */
+  onMoveCard: MoveCard
   now: number
   cursorKey: string | null
   selectedKey: string | null
@@ -54,10 +54,10 @@ export interface BoardProps {
 /**
  * Desktop board: a header (summary, List | Board, search, filters, last grouping run,
  * Regroup) over horizontal Kanban columns — one per group, cards = sessions. The same
- * search / status / host filters as the list apply to the cards. Columns can be renamed,
- * reordered and cards dragged between them (BoardColumns).
+ * search / status / host filters as the list apply to the cards. Columns can be renamed and
+ * reordered, cards dragged into place within a column or between them (BoardColumns).
  */
-export function Board({ list, groups, columns, onMoveColumn, now, cursorKey, selectedKey, overlayInset, searchRef, onSearchNav, onOpen, onNew, view, onView }: BoardProps) {
+export function Board({ list, groups, columns, onMoveColumn, onMoveCard, now, cursorKey, selectedKey, overlayInset, searchRef, onSearchNav, onOpen, onNew, view, onView }: BoardProps) {
   const { fleet, error, query, setQuery, status, setStatus, setHostFilter, hosts, hostNames, host, view: lv, hostCounts, summary, unreachable, note } = list
   const boardRef = useRef<HTMLDivElement>(null)
 
@@ -102,11 +102,11 @@ export function Board({ list, groups, columns, onMoveColumn, now, cursorKey, sel
     <div className="flex h-full min-w-0 flex-col">
       <div
         data-tauri-drag-region="deep"
-        className="titlebar-lead flex shrink-0 flex-wrap items-center gap-x-3 gap-y-2 border-b px-4 pt-3 pb-2.5 [--titlebar-pad:1rem]"
+        className="titlebar-lead relative z-10 flex shrink-0 flex-wrap items-center gap-x-2.5 gap-y-2 bg-frame/75 px-6 dark:bg-background/75 pt-3.5 pb-3 backdrop-blur-xl backdrop-saturate-150 [--titlebar-pad:1.5rem]"
       >
-        <h1 className="text-lg font-bold tracking-tight">Fleet</h1>
+        <h1 className="brand-title text-xl font-bold tracking-(--tracking-display)">Fleet</h1>
         {fleet ? (
-          <div className="flex items-center gap-2 text-xs text-muted-foreground tabular-nums" aria-label="Status summary">
+          <div className={cn('flex items-center gap-2.5 text-xs font-medium text-muted-foreground tabular-nums', hostNames.length > 1 && 'hidden 2xl:flex')} aria-label="Status summary">
             {summary.waiting > 0 ? (
               <span className="flex items-center gap-1 font-semibold text-status-waiting" title="Needs you">
                 <StatusDot status="waiting" className="size-2" />
@@ -125,7 +125,7 @@ export function Board({ list, groups, columns, onMoveColumn, now, cursorKey, sel
         ) : null}
         <ViewToggle value={view} onChange={onView} />
 
-        <div className="relative w-64 min-w-40">
+        <div className="relative max-w-64 min-w-28 flex-1 basis-40">
           <SearchIcon className="pointer-events-none absolute top-1/2 left-2.5 size-4 -translate-y-1/2 text-dimmer" />
           <Input
             ref={searchRef}
@@ -140,14 +140,14 @@ export function Board({ list, groups, columns, onMoveColumn, now, cursorKey, sel
             value={query}
             onChange={(e) => setQuery(e.target.value)}
             onKeyDown={onSearchKeyDown}
-            className="h-8 rounded-lg bg-card pr-9 pl-8 [&::-webkit-search-cancel-button]:hidden"
+            className="h-8 rounded-full border-transparent bg-fill pr-9 pl-8 shadow-none focus-visible:border-transparent focus-visible:bg-card [&::-webkit-search-cancel-button]:hidden"
           />
           {query ? (
             <button
               type="button"
               aria-label="Clear search"
               onClick={() => setQuery('')}
-              className="absolute inset-y-0 right-0 grid w-9 place-items-center rounded-r-lg text-dimmer outline-none hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring/50"
+              className="absolute inset-y-0 right-0 grid w-9 place-items-center rounded-r-full text-dimmer outline-none hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring/50"
             >
               <XIcon className="size-4" />
             </button>
@@ -156,11 +156,11 @@ export function Board({ list, groups, columns, onMoveColumn, now, cursorKey, sel
           )}
         </div>
 
-        <ToggleGroup type="single" value={status} onValueChange={(v) => v && setStatus(v as StatusFilterId)} aria-label="Filter by status">
+        <ToggleGroup type="single" value={status} onValueChange={(v) => v && setStatus(v as StatusFilterId)} aria-label="Filter by status" spacing={0.5} className={SEGMENTED}>
           {visibleStatusFilters(fleet ? lv.counts : null, status).map((f) => (
             <ToggleGroupItem key={f.id} value={f.id} className={chip} title={f.id === 'scheduled' ? 'Sessions started by scheduled jobs' : undefined}>
               <StatusFilterLabel filter={f} />
-              <span className="text-[0.6875rem] text-dimmer tabular-nums group-data-[state=on]/toggle:text-accent-foreground/70">
+              <span className="text-2xs text-dimmer tabular-nums group-data-[state=on]/toggle:text-muted-foreground">
                 {fleet ? lv.counts[f.id] : ''}
               </span>
             </ToggleGroupItem>
@@ -168,7 +168,7 @@ export function Board({ list, groups, columns, onMoveColumn, now, cursorKey, sel
         </ToggleGroup>
 
         {hostNames.length > 1 ? (
-          <ToggleGroup type="single" value={host ?? ALL_HOSTS} onValueChange={(v) => v && setHostFilter(v)} aria-label="Filter by host">
+          <ToggleGroup type="single" value={host ?? ALL_HOSTS} onValueChange={(v) => v && setHostFilter(v)} aria-label="Filter by host" spacing={0.5} className={SEGMENTED}>
             <ToggleGroupItem value={ALL_HOSTS} className={chip}>
               All
             </ToggleGroupItem>
@@ -176,17 +176,18 @@ export function Board({ list, groups, columns, onMoveColumn, now, cursorKey, sel
               <ToggleGroupItem key={h.name} value={h.name} className={chip}>
                 <HostDot host={h.name} />
                 <span className={cn(h.ok === false && 'text-destructive')}>{h.name}</span>
-                <span className="text-[0.6875rem] text-dimmer tabular-nums">{h.ok === false ? '!' : (hostCounts.get(h.name) ?? 0)}</span>
+                <span className="text-2xs text-dimmer tabular-nums">{h.ok === false ? '!' : (hostCounts.get(h.name) ?? 0)}</span>
               </ToggleGroupItem>
             ))}
           </ToggleGroup>
         ) : null}
 
         <div className="ml-auto flex min-w-0 items-center gap-2">
-          <GroupsStatus state={groups} now={now} />
-          <span className={cn('hidden truncate text-[0.6875rem] tabular-nums xl:inline', note.error ? 'text-destructive' : 'text-dimmer')}>{note.text}</span>
-          <ModuleButtons className="shrink-0 text-muted-foreground" />
-          <Button size="icon" aria-label="New session" title={withHint('New session', 'new')} onClick={onNew} className="shrink-0 rounded-full">
+          <BoardMeta state={groups} now={now} note={note} />
+          <div className={TOOLBAR}>
+            <ModuleButtons side="bottom" size="icon-sm" className="shrink-0 rounded-full text-muted-foreground" />
+          </div>
+          <Button size="icon" aria-label="New session" title={withHint('New session', 'new')} onClick={onNew} className="size-9 shrink-0 rounded-full shadow-[0_4px_14px_-4px_color-mix(in_oklab,var(--primary)_70%,transparent)]">
             <PlusIcon />
           </Button>
         </div>
@@ -214,11 +215,11 @@ export function Board({ list, groups, columns, onMoveColumn, now, cursorKey, sel
       <div
         ref={boardRef}
         data-session-list
-        className="flex min-h-0 flex-1 items-start gap-3 overflow-x-auto overscroll-x-contain p-3"
+        className="flex min-h-0 flex-1 items-start gap-6 overflow-x-auto overscroll-x-contain px-6 pt-4 pb-4 xl:gap-8 xl:px-8"
         style={overlayInset ? { scrollPaddingRight: overlayInset + 12 } : undefined}
       >
         {!fleet ? (
-          [0, 1, 2].map((i) => <Skeleton key={i} className="h-64 w-72 shrink-0 rounded-xl" />)
+          [0, 1, 2].map((i) => <Skeleton key={i} className="h-64 w-[20rem] shrink-0 rounded-[1.25rem]" />)
         ) : columns.length === 0 ? (
           <div className="w-full px-4 py-10 text-center text-sm text-dimmer">
             {allSessions(fleet).length > 0 ? 'Nothing matches.' : 'No Claude sessions running.'}
@@ -233,9 +234,10 @@ export function Board({ list, groups, columns, onMoveColumn, now, cursorKey, sel
             editable={groups.editable}
             onEdit={groups.edit}
             onMoveColumn={onMoveColumn}
+            onMoveCard={onMoveCard}
           />
         )}
-        {fleet ? <DormantSection now={now} host={host} query={query} desktop className="max-h-full w-72 shrink-0 overflow-y-auto rounded-xl border border-dashed p-2" /> : null}
+        {fleet ? <DormantSection now={now} host={host} query={query} desktop className="mt-9 max-h-full w-[20rem] shrink-0 overflow-y-auto rounded-[1rem] border border-dashed border-hairline p-2.5" /> : null}
         {fleet && columns.length && overlayInset ? <div aria-hidden className="shrink-0" style={{ width: overlayInset }} /> : null}
       </div>
     </div>

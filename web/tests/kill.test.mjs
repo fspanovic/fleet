@@ -97,3 +97,51 @@ test('kill: iterm closes the tab, tolerates refusal, dead pid is reported gone',
   const k2 = createKiller({ run: noRun, killProcess, sleep: async () => {}, closeIterm: async () => { throw new Error('nope'); } });
   assert.equal((await k2.kill({ pid: 4242, backend: 'iterm', handle: 'ABC' })).terminal, 'iterm-tab-left');
 });
+
+/** tmux for a restart: the pane's pid, then its foreground command (`claude` until it died, then the shell). */
+function restartRun({ panePid = '100', after = 'zsh' } = {}) {
+  const calls = [];
+  let dead = false;
+  const run = async (bin, args) => {
+    calls.push([bin, ...args]);
+    if (args[0] === 'display-message' && args.at(-1) === '#{pane_pid}') return { stdout: `${panePid}\n`, stderr: '' };
+    if (args[0] === 'display-message' && args.at(-1) === '#{pane_current_command}') {
+      if (after === null && dead) throw new Error("can't find pane: %7");
+      return { stdout: dead ? `${after}\n` : '2.1.306\n', stderr: '' };
+    }
+    return { stdout: '', stderr: '' };
+  };
+  return { calls, run, die: () => (dead = true) };
+}
+
+test('restart: ends Claude, keeps the pane, and types the resume line into it once the shell is back', async () => {
+  const r = restartRun();
+  const { sent, killProcess } = fakeProcess();
+  const k = createKiller({ run: r.run, killProcess: (pid, sig) => (sig === 'SIGTERM' && r.die(), killProcess(pid, sig)), sleep: async () => {} });
+  const res = await k.restart({ pid: 4242, backend: 'tmux', handle: '%7' }, "cd '/w' && claude --resume 's1' --dangerously-skip-permissions");
+  assert.deepEqual(res, { process: 'terminated', terminal: 'left', pane: '%7' });
+  assert.deepEqual(sent, [0, 'SIGTERM', 0]);
+  const typed = r.calls.filter((c) => c[1] === 'send-keys');
+  assert.deepEqual(typed, [
+    ['tmux', 'send-keys', '-t', '%7', '-l', '--', "cd '/w' && claude --resume 's1' --dangerously-skip-permissions"],
+    ['tmux', 'send-keys', '-t', '%7', 'Enter'],
+  ]);
+  assert.equal(r.calls.some((c) => /^kill-/.test(c[1])), false, 'the terminal is kept');
+});
+
+test('restart: refused before anything ends when Claude is the pane\'s own process, or not in tmux', async () => {
+  const r = restartRun({ panePid: '4242' });
+  const { sent, killProcess } = fakeProcess();
+  const k = createKiller({ run: r.run, killProcess, sleep: async () => {} });
+  await assert.rejects(k.restart({ pid: 4242, backend: 'tmux', handle: '%7' }, 'x'), (e) => e.status === 409 && /own command/.test(e.message));
+  assert.deepEqual(sent, [], 'nothing signalled');
+  await assert.rejects(k.restart({ pid: 4242, backend: 'iterm', handle: 'w0t0p0' }, 'x'), (e) => e.status === 409);
+});
+
+test('restart: a pane that closed anyway is a 502 and nothing is typed', async () => {
+  const r = restartRun({ after: null });
+  const { killProcess } = fakeProcess();
+  const k = createKiller({ run: r.run, killProcess: (pid, sig) => (sig === 'SIGTERM' && r.die(), killProcess(pid, sig)), sleep: async () => {} });
+  await assert.rejects(k.restart({ pid: 4242, backend: 'tmux', handle: '%7' }, 'x'), (e) => e.status === 502);
+  assert.equal(r.calls.some((c) => c[1] === 'send-keys'), false);
+});
